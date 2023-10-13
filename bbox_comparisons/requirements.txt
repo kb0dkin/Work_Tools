@@ -1,0 +1,7 @@
+keras-core
+keras-cv
+jupyter
+numpy
+pandas
+matplotlib
+ipympl
