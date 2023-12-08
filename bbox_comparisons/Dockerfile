@@ -6,4 +6,4 @@ COPY requirements.txt requirements.txt
 RUN ["pip", "install","--upgrade","pip"]
 RUN ["pip", "install", "-r", "requirements.txt"]
 
-CMD ["jupyter","notebook","--port","6660","--no-browser","--ip","0.0.0.0","--allow-root"]
+CMD ["jupyter","notebook","--port","6660","--no-browser","--ip","0.0.0.0","--allow-root","--notebook-dir","/git"]
