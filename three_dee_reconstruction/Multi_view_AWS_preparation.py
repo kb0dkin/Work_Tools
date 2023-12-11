@@ -25,12 +25,12 @@ iy = 0
 drawing = 0
 img = None
 draw_img = None
-bound_names = ['north','south','east','west','bottom']
+bound_names = ['north','south','east','west','center']
 bounds = {view:np.zeros((4,1)) for view in bound_names}
 bound_i = 0
 
 
-def multi_view_preparation(output_dir:str = None, input_vids:List[str] = None, num_images = 100):
+def multi_view_preparation(output_dir:str = None, input_vids:List[str] = None, num_frames = 100):
     '''
     Put together everything needed for a multi-view AWS labeling setup.
 
@@ -54,22 +54,11 @@ def multi_view_preparation(output_dir:str = None, input_vids:List[str] = None, n
     if (input_vids is None) or not any([path.exists(vid) for vid in input_vids]) :
         input_vids = select_vids(output_dir)
 
-
     # locations of views
     view_bounds = bound_creator(input_vids)
 
-    # # crop the images based on the bounds
-    # # imgs_cropped = {img_num:img[view_bounds[img_num,[0,2]],view_bounds[img_num,[1,3]]] for img_num in range(view_bounds.shape[0])}
-
-    # for num,imgs in imgs_cropped:
-    #     while True:
-    #         cv2.imshow(imgs_cropped)
-    #         if (cv2.waitKey(1) & 0xFF) == 17:
-    #             break
-
-
-
-
+    # read videos, split them, then save them. 
+    # might also be worth storing the 
 
 
 
@@ -111,18 +100,21 @@ def bound_creator(input_vids:List[str]):
     vid = random.choice(input_vids)
     cam = cv2.VideoCapture(vid)
     ret,frame = cam.read()
+    cam.release()
     # ret,img = cam.read()
     if ret:
         img = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         draw_img = img.copy() # create a copy that's used for cleaning up the dragged rectangles
+
+        # create a new window
         cv2.namedWindow('maskSelect', cv2.WINDOW_NORMAL + cv2.WINDOW_KEEPRATIO)
         cv2.setMouseCallback('maskSelect', draw_mask)
+
+        # place instruction text in the center of the image
         center = tuple(np.floor(np.array(img.shape)/2)[::-1].astype(int))
-        print(center)
-        # cv2.putText(img, bound_names[bound_i], np.floor(np.array(img.shape)/2).T.astype(int), cv2.FONT_HERSHEY_SIMPLEX, 10, (255,255,255))
         cv2.putText(img, bound_names[bound_i], center, cv2.FONT_HERSHEY_SIMPLEX, 4, (255,255,255), 3)
         
-
+        # limited to the number of bounds we have
         while bound_i < 5:
             cv2.imshow('maskSelect',img)
             k = cv2.waitKey(1) & 0xFF
@@ -164,8 +156,83 @@ def draw_mask(event, x, y, flags, params):
         # update the list of view boundaries
         bounds[bound_names[bound_i]] = np.array([min(ix,x),min(iy,y),max(ix,x),max(iy,y)])
         bound_i += 1
-        # cv2.putText(img, bound_names[bound_i], np.floor(np.array(img.shape)/2).T.astype(int), cv2.FONT_HERSHEY_SIMPLEX, 10, (255,255,255))
-        cv2.putText(img, bound_names[bound_i], (1900,500), cv2.FONT_HERSHEY_SIMPLEX, 4, (255,255,255), 3)
+
+        # place instruction text in the center of the image
+        if bound_i < 5:
+            center = tuple(np.floor(np.array(img.shape)/2)[::-1].astype(int))
+            cv2.putText(img, bound_names[bound_i], center, cv2.FONT_HERSHEY_SIMPLEX, 4, (255,255,255), 3)
+
+
+# split the image, put it back together
+def crop_and_splice(bounds, video_paths, output_dir, num_frames):
+    '''
+    crop a video based on the bounds given, then splice them together into a single scene. 
+    
+    '''
+
+    # the width will be the west and east image widths plus the largest width of north, center, and south
+    width = bounds['west'][2] - bounds['west'][0]
+    width += bounds['east'][2] - bounds['east'][0]
+    width += max([bounds['north'][2] - bounds['north'][0], bounds['center'][2] - \
+            bounds['center'][0], bounds['south'][2] - bounds['south'][0]])
+
+    # the height will be the west and east image heights plus the largest height of north, center, and south
+    height = bounds['west'][3] - bounds['west'][1]
+    height += bounds['east'][3] - bounds['east'][1]
+    height += max([bounds['north'][3] - bounds['north'][1], bounds['center'][3] - \
+            bounds['center'][1], bounds['south'][3] - bounds['south'][1]])
+    
+
+    # the directory should already exist, but just in case...
+    if not path.exists(output_dir):
+        makedirs(output_dir)
+    # also a directory for the frames to send to aws
+    label_dir = path.join(output_dir, 'frames_to_label')
+    if not path.exists(label_dir):
+        makedirs(label_dir)
+
+    # how many label frames do we want per video?
+    frames_rem = num_frames
+    per_vid = int(np.ceil(num_frames/len(video_paths)))
+
+
+    # for each video ....
+    for i_video, video_path in enumerate(video_paths):
+        print(f'Cropping video {i_video} of {len(video_paths)}')
+
+        # check to make sure the video exists. If not, print to console and skip
+        if not path.exists(video_path):
+            print(f'Couldn\'t find {video_path}. Continuing to next video.')
+
+        # open a video reader and writer for the splitting
+        vid_read = cv2.VideoCapture(video_path)
+        vid_dirname, vid_filename = path.split(video_path) # get the storage location and video name
+        vid_basename = path.splitext(vid_filename)[0] # for the cropped video and tagging frames
+        vid_savename = path.join([vid_dirname,vid_basename + '_cropped.mp4']) # to save the cropped file
+        vid_write = cv2.VideoWriter(vid_savename)
+
+        # get a list of frames to use -- random for now. I suppose in the future we could do K-means or PCA or something
+        label_frames = random.choices(range(vid_read.get(cv2.CAP_PROP_FRAME_COUNT)), k = int(np.min(per_vid, frames_rem)))
+        frames_rem -= per_vid # how many more do we need from future videos?
+
+        # create an empty frame for later use
+        empty_frame = np.zeros((height,width))
+        
+        # loop through the frames
+        i_frame = 0 # to keep track of whether we want to use this frame for labeling
+        while True:
+            # grab a frame
+            ret,frame = vid_read.read()
+
+            # if we're through the frames, leave the while loop
+            if not ret:
+                break
+
+            # 
+
+
+
+
 
 
 # arg parsing to run from the command line or just call straight
