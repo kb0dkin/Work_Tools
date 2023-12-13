@@ -9,12 +9,10 @@ the views, and the template html for the labeling tool
 
 
 from os import path, makedirs
-# from matplotlib import pyplot as plt
-# from matplotlib.patches import Polygon
-# from matplotlib.backend_bases import MouseButton
 import numpy as np
 import cv2, glob, random, argparse, time
 from typing import List
+from pprint import pprint
 
 # file explorer
 from tkinter import Tk
@@ -26,7 +24,7 @@ drawing = 0
 img = None
 draw_img = None
 bound_names = ['north','south','east','west','center']
-bounds = {view:np.zeros((4,1)) for view in bound_names}
+bounds = {view:np.zeros((4,1)) for view in bound_names} # vertical, horizontal, height, width (treated as any other array)
 bound_i = 0
 
 
@@ -53,16 +51,10 @@ def multi_view_preparation(output_dir:str = None, input_vids:List[str] = None, n
     # select the videos
     if (input_vids is None) or not any([path.exists(vid) for vid in input_vids]) :
         input_vids = select_vids(output_dir)
-
-    # locations of views
-    view_bounds = bound_creator(input_vids)
-    # print(view_bounds)
     
     # read videos, split them, then save them. 
     # might also be worth storing the 
-    crop_and_splice(view_bounds, input_vids, output_dir, num_frames)
-
-
+    crop_and_splice(input_vids, output_dir, num_frames)
 
 
 
@@ -94,18 +86,16 @@ def select_vids(output_dir):
     return input_vids
 
 
-def bound_creator(input_vids:List[str]):
+def bound_creator(vid:str):
     '''
     Displays a random frame in a video and has the user select different views
     '''
     global img, draw_img, bounds, bound_i, bound_names # don't have a better way to pass them around right now
     
     # pull out a single image of a single video
-    vid = random.choice(input_vids)
     cam = cv2.VideoCapture(vid)
     ret,frame = cam.read()
     cam.release()
-    # ret,img = cam.read()
     if ret:
         img = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         draw_img = img.copy() # create a copy that's used for cleaning up the dragged rectangles
@@ -128,6 +118,17 @@ def bound_creator(input_vids:List[str]):
     cv2.destroyAllWindows()
 
     return bounds
+
+
+def clear_bounds():
+    '''
+    resets the global variables bounds and bound_i
+
+    This is so that we can have a different boundary setup per video
+    '''
+    global bounds, bound_i
+    bound_i = 0
+    bounds = {view:np.zeros((4,1)) for view in bound_names} # vertical, horizontal, height, width (treated as any other array)
 
 
 def draw_mask(event, x, y, flags, params):
@@ -157,8 +158,8 @@ def draw_mask(event, x, y, flags, params):
         drawing = False
         cv2.rectangle(img, (ix,iy), (x,y), (255,255,255), 3)
         
-        # update the list of view boundaries
-        bounds[bound_names[bound_i]] = np.array([min(ix,x),min(iy,y),max(ix,x),max(iy,y)])
+        # update the list of view boundaries 
+        bounds[bound_names[bound_i]] = np.array([min(iy,y),min(ix,x),max(iy,y),max(ix,x)])
         bound_i += 1
 
         # place instruction text in the center of the image
@@ -168,54 +169,58 @@ def draw_mask(event, x, y, flags, params):
 
 
 # split the image, put it back together
-def crop_and_splice(bounds, video_paths, output_dir, num_frames):
+def crop_and_splice(video_paths, output_dir, num_frames):
     '''
     crop a video based on the bounds given, then splice them together into a single scene. 
     
     '''
-    # get the widths and heighths of each view 
-    # debating changing all of the xyxy to xywh...
-    width_subs = {key:(bounds[key][2] - bounds[key][0]) for key in bounds.keys()}
-    height_subs = {key:(bounds[key][3] - bounds[key][1]) for key in bounds.keys()}
-    
-    # the width will be the west and east image widths plus the largest width of north, center, and south
-    width = width_subs['west'] + width_subs['east']
-    width += max([width_subs['north'],width_subs['center'],width_subs['south']])
-
-    # the height will be the west and east image heights plus the largest height of north, center, and south
-    height = height_subs['north'] + height_subs['south']
-    height += max([height_subs['west'],height_subs['center'],height_subs['east']])
-
-    # locations of each view within the frame
-    target_locn = dict()
-    # west
-    target_locn['west'] = [0, (height - height_subs['west'])/2, width_subs['west'], (height + height_subs['west'])/2]
-    # east
-    target_locn['east'] = [width-width_subs['east'], (height - height_subs['east'])/2, width, (height + height_subs['east'])/2]
-    # north
-    target_locn['north'] = [(width - width_subs['north'])/2, 0, (width + width_subs['north'])/2, height_subs['north']]
-    # center
-    target_locn['center'] = [width_subs['west'], height_subs['north'], width_subs['west'] + width_subs['center'], height_subs['center'] + height_subs['center']]
-    #south
-    target_locn['south'] = [(width - width_subs['south'])/2, height - height_subs['south'], (width + width_subs['south'])/2, height]
-
-
-    # the directory should already exist, but just in case...
-    if not path.exists(output_dir):
-        makedirs(output_dir)
-    # also a directory for the frames to send to aws
-    label_dir = path.join(output_dir, 'frames_to_label')
-    if not path.exists(label_dir):
-        makedirs(label_dir)
-
-    # how many label frames do we want per video?
-    frames_rem = num_frames
-    per_vid = int(np.ceil(num_frames/len(video_paths)))
-
-
     # for each video ....
     for i_video, video_path in enumerate(video_paths):
-        print(f'Cropping video {i_video} of {len(video_paths)}')
+        # locations of views
+        clear_bounds()
+        bounds = bound_creator(video_path)
+    
+        # print(view_bounds)
+        # get the widths and heighths of each view 
+        # debating changing all of the xyxy to xywh...
+        width_subs = {key:(bounds[key][3]-bounds[key][1]) for key in bounds.keys()}
+        height_subs = {key:(bounds[key][2]-bounds[key][0]) for key in bounds.keys()}
+    
+        # the width will be the west and east image widths plus the largest width of north, center, and south
+        width = width_subs['west'] + width_subs['east']
+        width += max([width_subs['north'],width_subs['center'],width_subs['south']])
+
+        # the height will be the west and east image heights plus the largest height of north, center, and south
+        height = height_subs['north'] + height_subs['south']
+        height += max([height_subs['west'],height_subs['center'],height_subs['east']])
+
+        # locations of each view within the frame
+        target_corner = dict()
+        # west
+        target_corner['west'] = [int((height - height_subs['west'])/2), 0]
+        # east
+        target_corner['east'] = [int((height - height_subs['east'])/2), width-width_subs['east']]
+        # north
+        target_corner['north'] = [0, int((width - width_subs['north'])/2)]
+        # center
+        target_corner['center'] = [int((height-height_subs['center'])/2), int((width-width_subs['center'])/2)]
+        #south
+        target_corner['south'] = [height - height_subs['south'], int((width - width_subs['south'])/2)]
+
+
+        # the directory should already exist, but just in case...
+        if not path.exists(output_dir):
+            makedirs(output_dir)
+        # also a directory for the frames to send to aws
+        label_dir = path.join(output_dir, 'frames_to_label')
+        if not path.exists(label_dir):
+            makedirs(label_dir)
+
+        # how many label frames do we want per video?
+        frames_rem = num_frames
+        per_vid = int(np.ceil(num_frames/len(video_paths)))
+
+        print(f'Cropping video {i_video+1} of {len(video_paths)}')
 
         # check to make sure the video exists. If not, print to console and skip
         if not path.exists(video_path):
@@ -226,13 +231,12 @@ def crop_and_splice(bounds, video_paths, output_dir, num_frames):
         vid_dirname, vid_filename = path.split(video_path) # get the storage location and video name
         vid_basename = path.splitext(vid_filename)[0] # for the cropped video and tagging frames
         vid_savename = path.join(vid_dirname,vid_basename + '_cropped.mp4') # to save the cropped file
-        vid_write = cv2.VideoWriter(vid_savename, cv2.VideoWriter_fourcc(*'MP4V'), 50, (width, height))
+        vid_write = cv2.VideoWriter(vid_savename, cv2.VideoWriter_fourcc(*'mp4v'), 50, (width, height))
 
         # get a list of frames to use -- random for now. I suppose in the future we could do K-means or PCA or something
-        label_frames = random.choices(range(int(vid_read.get(cv2.CAP_PROP_FRAME_COUNT))), k = int(np.min(per_vid, frames_rem)))
+        label_frames = random.choices(range(int(vid_read.get(cv2.CAP_PROP_FRAME_COUNT))), k = int(np.min([per_vid, frames_rem])))
         frames_rem -= per_vid # how many more do we need from future videos?
 
-        
         # loop through the frames
         i_frame = 0 # to keep track of whether we want to use this frame for labeling
         while True:
@@ -244,17 +248,21 @@ def crop_and_splice(bounds, video_paths, output_dir, num_frames):
                 break
 
             # split the frame based on the crops, then put into the video
-            fill_frame = np.zeros((height,width))
+            fill_frame = np.zeros((height,width,3))
             for key in bounds.keys():
-                fill_frame[target_locn[key]] = frame[bounds[key]]
+                bound = bounds[key]
+                locn = target_corner[key]
+                ws = width_subs[key]
+                hs = height_subs[key]
+                fill_frame[locn[0]:(locn[0]+hs),locn[1]:(locn[1]+ws),:] = frame[bound[0]:(bound[0]+hs), bound[1]:(bound[1]+ws),:]
 
             # write it to the output video            
-            vid_write.write(fill_frame)
+            vid_write.write(fill_frame.astype(np.uint8)) # have to convert it to a uint
 
             # save it if it's a frame we want to label
             if i_frame in label_frames:
-                im_filename = vid_basename + str(i_frame).zfill(8) + '.png' # filename with frame number
-                ret_im = cv2.imwrite(im_filename,frame) # write it
+                im_filename = path.join(output_dir, vid_basename + str(i_frame).zfill(8) + '.png') # filename with frame number
+                ret_im = cv2.imwrite(im_filename,fill_frame) # write it
                 if not ret_im:
                     frames_rem += 1 # still need to store another frame
                     print(f'Unable to save image {im_filename}') # let the user know
@@ -263,8 +271,8 @@ def crop_and_splice(bounds, video_paths, output_dir, num_frames):
             i_frame += 1
 
         # clean everything up for this loop
-        vid_read.close()
-        vid_write.close()
+        vid_read.release()
+        vid_write.release()
 
 
 
