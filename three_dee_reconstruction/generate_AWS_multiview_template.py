@@ -1,13 +1,10 @@
 import argparse
-import yaml
 import os, sys
 
 # create template for an AWS labeling job
-def generate_AWS_template(keypoints:list):
+def generate_AWS_template(keypoints:list, project_dir):
 
 	# with open(config) as f:
-	# 	data = yaml.load(f, Loader=yaml.FullLoader)
-	# data['labels'] = [n + " " + data['species'] + " " + k for n in data['animal_names'] for k in data['keypoints']]
 	data = dict()
 	data['labels'] = keypoints
 	data['header'] = 'Label body parts of mouse in each view'
@@ -16,8 +13,6 @@ def generate_AWS_template(keypoints:list):
 	data['num_img'] = 5
 	data['img_bounds'] = [[0,360,640,720],[640,0,1280,360],[640,360,1280,720],[640,720,1280,1080],[1280,360,1920,720]]
 
-	# project_dir = os.path.dirname(config)
-	project_dir = os.path.abspath('/home/klb807/Documents/')
 	f = open(os.path.join(project_dir, 'annotation_interface.template'), 'w')
 
 	message = """
@@ -50,7 +45,7 @@ def generate_AWS_template(keypoints:list):
 	<!----------------------------------------Script to ensure each body part is annotated exactly N times------------------------------------------------>
 	<script>
     	var num_img = {num_img} // this is currently setup as a python f-string
-		const img_bounds = {img_bounds} // does it work with a straight list?
+		const img_bounds = {{{{ task.input.img_bounds }}}} // does it work with a straight list?
 
     	// create a submission callback
     	document.querySelector('crowd-form').onsubmit = function(e) {{
@@ -95,7 +90,3 @@ def generate_AWS_template(keypoints:list):
 
 	f.write(message)
 	f.close()
-
-
-		# const img_bounds = [[0,360,640,720],[640,0,1280,360],[640,360,1280,720],[640,720,1280,1080],[1280,360,1920,720]]
-    	# const img_bounds = [{img_bounds[0,:]},{img_bounds[1,:]},{img_bounds[2,:]},{img_bounds[3,:]}] // boundary of each of the views in image xyxy

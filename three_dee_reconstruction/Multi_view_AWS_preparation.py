@@ -211,10 +211,8 @@ def crop_and_splice(video_paths, output_dir, num_frames):
         # the directory should already exist, but just in case...
         if not path.exists(output_dir):
             makedirs(output_dir)
-        # also a directory for the frames to send to aws
-        label_dir = path.join(output_dir, 'frames_to_label')
-        if not path.exists(label_dir):
-            makedirs(label_dir)
+        # if not path.exists(label_dir):
+        #     makedirs(label_dir)
 
         # how many label frames do we want per video?
         frames_rem = num_frames
@@ -230,12 +228,15 @@ def crop_and_splice(video_paths, output_dir, num_frames):
         vid_read = cv2.VideoCapture(video_path)
         vid_dirname, vid_filename = path.split(video_path) # get the storage location and video name
         vid_basename = path.splitext(vid_filename)[0] # for the cropped video and tagging frames
-        vid_savename = path.join(vid_dirname,vid_basename + '_cropped.mp4') # to save the cropped file
+        vid_savename = path.join(output_dir,vid_basename + '_cropped.mp4') # to save the cropped file
         vid_write = cv2.VideoWriter(vid_savename, cv2.VideoWriter_fourcc(*'mp4v'), 50, (width, height))
 
         # get a list of frames to use -- random for now. I suppose in the future we could do K-means or PCA or something
         label_frames = random.choices(range(int(vid_read.get(cv2.CAP_PROP_FRAME_COUNT))), k = int(np.min([per_vid, frames_rem])))
         frames_rem -= per_vid # how many more do we need from future videos?
+
+        # need to track the bounding boxes for the lambda function
+        bound_fid = open(path.join(output_dir,'boundaries.txt'), 'w+')
 
         # loop through the frames
         i_frame = 0 # to keep track of whether we want to use this frame for labeling
@@ -261,11 +262,15 @@ def crop_and_splice(video_paths, output_dir, num_frames):
 
             # save it if it's a frame we want to label
             if i_frame in label_frames:
-                im_filename = path.join(output_dir, vid_basename + str(i_frame).zfill(8) + '.png') # filename with frame number
-                ret_im = cv2.imwrite(im_filename,fill_frame) # write it
+                im_filename = vid_basename + '_' + str(i_frame).zfill(8) + '.png'
+                im_path = path.join(output_dir, im_filename) # filename with frame number
+                ret_im = cv2.imwrite(im_path,fill_frame) # write it
                 if not ret_im:
                     frames_rem += 1 # still need to store another frame
                     print(f'Unable to save image {im_filename}') # let the user know
+
+                boundary_list = [[target_corner[key][0],target_corner[key][1],target_corner[key][0]+height_subs[key], target_corner[key][1] + width_subs[key]] for key in target_corner.keys()]
+                bound_fid.write(f'{im_filename}: {boundary_list}\n')
 
             # update the counter
             i_frame += 1
@@ -273,6 +278,9 @@ def crop_and_splice(video_paths, output_dir, num_frames):
         # clean everything up for this loop
         vid_read.release()
         vid_write.release()
+        bound_fid.close()
+
+        
 
 
 
