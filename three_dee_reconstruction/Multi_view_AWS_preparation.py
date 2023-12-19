@@ -38,8 +38,7 @@ def multi_view_preparation(output_dir:str = None, input_vids:List[str] = None, n
 
     For each run it will create:
     1. A series of images from the videos provided. Currently chosen randomly
-    2. An AWS file manifest for all of the images.
-    3. A template HTML file for the labeling tool.
+    2. A template HTML file for the labeling tool.
 
     [optional] args:
     - 
@@ -174,6 +173,9 @@ def crop_and_splice(video_paths, output_dir, num_frames):
     crop a video based on the bounds given, then splice them together into a single scene. 
     
     '''
+    # need to track the bounding boxes for the lambda function
+    bound_fid = open(path.join(output_dir,'boundaries.txt'), 'w+')
+    
     # for each video ....
     for i_video, video_path in enumerate(video_paths):
         # locations of views
@@ -235,8 +237,6 @@ def crop_and_splice(video_paths, output_dir, num_frames):
         label_frames = random.choices(range(int(vid_read.get(cv2.CAP_PROP_FRAME_COUNT))), k = int(np.min([per_vid, frames_rem])))
         frames_rem -= per_vid # how many more do we need from future videos?
 
-        # need to track the bounding boxes for the lambda function
-        bound_fid = open(path.join(output_dir,'boundaries.txt'), 'w+')
 
         # loop through the frames
         i_frame = 0 # to keep track of whether we want to use this frame for labeling
@@ -278,7 +278,9 @@ def crop_and_splice(video_paths, output_dir, num_frames):
         # clean everything up for this loop
         vid_read.release()
         vid_write.release()
-        bound_fid.close()
+        
+    # close boundary location file -- this is for all videos :)    
+    bound_fid.close()
 
         
 

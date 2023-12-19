@@ -22,7 +22,7 @@ def generate_AWS_template(keypoints:list, project_dir):
   	<div id="errorBox">
   	</div>
     	<crowd-keypoint
-        	src="{{{{ task.input.taskObject | grant_read_access }}}}"
+        	src="{{{{ task.input.source_ref | grant_read_access }}}}"
         	labels="{labels}"
         	header="{header}"
         	name="annotatedResult">
@@ -56,7 +56,7 @@ def generate_AWS_template(keypoints:list, project_dir):
 
     	// look if a keypoint is within an array bounds -- xyxy
     	function within(label, bounds) {{
-        	return label.x > bounds[0] && label.x < bounds[2] && label.y > bounds[1] && label.y > bounds[3];
+        	return label.x > bounds[1] && label.x < bounds[3] && label.y > bounds[0] && label.y < bounds[2];
     	}}
 
     	for (var ii = 0; ii < num_img; ii++) {{

@@ -8,16 +8,19 @@ def create_manifest(bucket,manifest_name='file_list.manifest'):
     s3 = boto3.client('s3')
 
     # bring in the list of boundaries
-    boundaries = s3.get_object(Bucket = bucket, key='boundaries.txt')
-    boundary_dict = {line.split(':')[0]:line.split(':')[1] for line in boundaries}
-    
+    # deal with pagination
+    response_body = [line.decode() for line in s3.get_object(Bucket = bucket, Key='boundaries.txt')['Body']]
+    # split by line
+    boundaries = ''.join(response_body).split('\n')
+    #  switch to dictionary:
+    boundaries = {line.split(':')[0]:eval(line.split(':')[1]) for line in boundaries  if ':' in line}    
 
     filelist = []
     for i,key in enumerate(s3.list_objects(Bucket=bucket)['Contents']):
         if key['Key'].endswith('jpg') or key['Key'].endswith('png'):
             insert_line = f'''
                           {{ "source-ref":"s3://{bucket}/{key['Key']}",
-                           "img-bounds":"{boundary_dict[key['Key']]}" }}
+                           "img-bounds":"{boundaries[key['Key']]}" }}
                         '''
             filelist.append(insert_line)
 
