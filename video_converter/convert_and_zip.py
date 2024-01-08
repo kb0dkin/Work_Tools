@@ -22,9 +22,9 @@ def main(walk_dir='/media/fsmresfiles/ASAP/iMCI-P60induction/', log_file = '/hom
             continue
 
         # append to the done_list if it already has videos
-        # if mp4_files:
-        #     done_list.append(dirpath)
-        #     continue
+        if mp4_files:
+            done_list.append(dirpath)
+            continue
 
         convert_list.append(dirpath)
 
@@ -74,10 +74,10 @@ def main(walk_dir='/media/fsmresfiles/ASAP/iMCI-P60induction/', log_file = '/hom
         ''').read()
 
         # stick into a zip archive
-        zip_name = 'images.zip'
-        with ZipFile(zip_name,'w', compression=ZIP_DEFLATED, compresslevel=9) as zf:
-            for file in tiff_files:
-                zf.write(file)
+        #zip_name = 'images.zip'
+        #with ZipFile(zip_name,'w', compression=ZIP_DEFLATED, compresslevel=9) as zf:
+            #for file in tiff_files:
+                #zf.write(file)
 
         # os.remove('framelist.txt')
 

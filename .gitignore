@@ -174,3 +174,6 @@ cython_debug/
 *.swp
 *.un~
 *~
+
+# sleap stuff
+*.slp
