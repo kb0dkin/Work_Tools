@@ -255,7 +255,17 @@ def crop_and_splice(video_paths, output_dir, num_frames):
                 locn = target_corner[key]
                 ws = width_subs[key]
                 hs = height_subs[key]
-                fill_frame[locn[0]:(locn[0]+hs),locn[1]:(locn[1]+ws),:] = frame[bound[0]:(bound[0]+hs), bound[1]:(bound[1]+ws),:]
+                
+                # normalize so color of frame fills the whole range -- maximize visibility
+                frame_temp = frame[bound[0]:(bound[0]+hs), bound[1]:(bound[1]+ws),:]
+                min_temp = np.min(frame_temp)
+                max_temp = np.max(frame_temp)
+                range_xer = 255/(max_temp-min_temp)
+                frame_temp = ((frame_temp - min_temp)*range_xer).astype(np.uint8)
+
+                fill_frame[locn[0]:(locn[0]+hs),locn[1]:(locn[1]+ws),:] = frame_temp
+
+            
 
             # write it to the output video            
             vid_write.write(fill_frame.astype(np.uint8)) # have to convert it to a uint
