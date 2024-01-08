@@ -8,6 +8,7 @@ import argparse
 
 def main(walk_dir='/media/fsmresfiles/ASAP/iMCI-P60induction/', log_file = '/home/kevin/Documents/convert_log.txt', max_directories = -1):
 
+    print(f'Looking through {walk_dir} for images and videos...')
     file_walk = os.walk(walk_dir)
 
     # create a list of the directories -- just so we can have a status bar later
@@ -44,7 +45,7 @@ def main(walk_dir='/media/fsmresfiles/ASAP/iMCI-P60induction/', log_file = '/hom
         if i_conv == max_directories:
             break
 
-        print(f'{i_conv} of {len(convert_list)}: {dirpath}')
+        print(f'{i_conv+1} of {len(convert_list)}: {dirpath}')
 
         old_dir = os.getcwd()
         os.chdir(dirpath) # move to the directory -- this makes things easier
@@ -69,24 +70,13 @@ def main(walk_dir='/media/fsmresfiles/ASAP/iMCI-P60induction/', log_file = '/hom
             fid.write("".join([f"file '{file}'\nduration 0.02\n" for file in tiff_sort]))
 
         # # create the video
-        os.popen(f'''ffmpeg -f concat -safe 0 -i {'framelist.txt'} -framerate 50\
-                -s 1280x1024 {vid_name} -hide_banner -loglevel warning
+        os.popen(f'''ffmpeg -f concat -safe 0 -r 50 -i {'framelist.txt'} -r 50\
+                {vid_name} -hide_banner -loglevel warning
         ''').read()
 
-        # stick into a zip archive
-        #zip_name = 'images.zip'
-        #with ZipFile(zip_name,'w', compression=ZIP_DEFLATED, compresslevel=9) as zf:
-            #for file in tiff_files:
-                #zf.write(file)
 
-        # os.remove('framelist.txt')
+        os.remove('framelist.txt')
 
-        # copy everything to the server
-        # dest_name = 'Y:\\ASAP\\'+ mouse + '\\' + rec_date + '\\' + task
-        # if not os.path.exists(dest_name):
-            # os.mkdir(dest_name)
-        # copy2(zip_name, dest_name)
-        # copy2(vid_name,dest_name)
 
         os.chdir(old_dir)
 
@@ -99,6 +89,3 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     main(walk_dir=args.base_dir, log_file=args.log, max_directories=args.max_vids)
-    # print(args.base_dir)
-    # print(args.log)
-    # print(args.max_vids)
