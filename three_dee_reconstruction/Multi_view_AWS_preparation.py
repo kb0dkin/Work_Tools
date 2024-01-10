@@ -175,6 +175,10 @@ def crop_and_splice(video_paths, output_dir, num_frames):
     '''
     # need to track the bounding boxes for the lambda function
     bound_fid = open(path.join(output_dir,'boundaries.txt'), 'w+')
+
+    # pull in the "reminder" image
+    rem_img = cv2.imread('./reminder.drawio.png')
+    rem_img = (img>125)*255 # make it black and white
     
     # for each video ....
     for i_video, video_path in enumerate(video_paths):
@@ -208,6 +212,11 @@ def crop_and_splice(video_paths, output_dir, num_frames):
         target_corner['center'] = [int((height-height_subs['center'])/2), int((width-width_subs['center'])/2)]
         #south
         target_corner['south'] = [height - height_subs['south'], int((width - width_subs['south'])/2)]
+
+        # downsampling the reminder image
+        target_width = min(rem_img.shape[1],width_subs['west'])
+        width_ratio = int(rem_img.shape[1]/target_width)
+        rem_dwn = rem_img[::width_ratio,::width_ratio,:]
 
 
         # the directory should already exist, but just in case...
@@ -250,19 +259,19 @@ def crop_and_splice(video_paths, output_dir, num_frames):
 
             # split the frame based on the crops, then put into the video
             fill_frame = np.zeros((height,width,3))
+            # put the reminder image in there
+            fill_frame[0:rem_dwn.shape[0],0:rem_dwn.shape[1],:] = rem_dwn
             for key in bounds.keys():
                 bound = bounds[key]
                 locn = target_corner[key]
                 ws = width_subs[key]
                 hs = height_subs[key]
                 
-                # normalize so color of frame fills the whole range -- maximize visibility
+                # gamma correction to improve range
                 frame_temp = frame[bound[0]:(bound[0]+hs), bound[1]:(bound[1]+ws),:]
-                min_temp = np.min(frame_temp)
-                max_temp = np.max(frame_temp)
-                range_xer = 255/(max_temp-min_temp)
-                frame_temp = ((frame_temp - min_temp)*range_xer).astype(np.uint8)
+                frame_temp = ((frame_temp/255)**.6 * 255).astype(np.uint8)
 
+                # stick the frame in there
                 fill_frame[locn[0]:(locn[0]+hs),locn[1]:(locn[1]+ws),:] = frame_temp
 
             
