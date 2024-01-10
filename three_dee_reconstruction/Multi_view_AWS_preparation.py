@@ -9,6 +9,7 @@ the views, and the template html for the labeling tool
 
 
 from os import path, makedirs
+import os
 import numpy as np
 import cv2, glob, random, argparse, time
 from typing import List
@@ -104,7 +105,8 @@ def bound_creator(vid:str):
         cv2.setMouseCallback('maskSelect', draw_mask)
 
         # place instruction text in the center of the image
-        center = tuple(np.floor(np.array(img.shape)/2)[::-1].astype(int))
+        text_size = cv2.getTextSize(bound_names[bound_i], 4, 3)[0]
+        center = tuple(int((img.shape[1]-text_size[0])/2),int(img.shape[0]+text_size[1]))
         cv2.putText(img, bound_names[bound_i], center, cv2.FONT_HERSHEY_SIMPLEX, 4, (255,255,255), 3)
         
         # limited to the number of bounds we have
@@ -176,9 +178,9 @@ def crop_and_splice(video_paths, output_dir, num_frames):
     # need to track the bounding boxes for the lambda function
     bound_fid = open(path.join(output_dir,'boundaries.txt'), 'w+')
 
-    # pull in the "reminder" image
-    rem_img = cv2.imread('./reminder.drawio.png')
-    rem_img = (img>125)*255 # make it black and white
+    # # pull in the "reminder" image
+    # rem_img = cv2.imread(os.path.join(os.getcwd(),'Reminder.drawio.png'))
+    # rem_img = (rem_img>125)*255 # make it black and white
     
     # for each video ....
     for i_video, video_path in enumerate(video_paths):
@@ -213,10 +215,10 @@ def crop_and_splice(video_paths, output_dir, num_frames):
         #south
         target_corner['south'] = [height - height_subs['south'], int((width - width_subs['south'])/2)]
 
-        # downsampling the reminder image
-        target_width = min(rem_img.shape[1],width_subs['west'])
-        width_ratio = int(rem_img.shape[1]/target_width)
-        rem_dwn = rem_img[::width_ratio,::width_ratio,:]
+        # # downsampling the reminder image
+        # target_width = min(rem_img.shape[1],width_subs['west'])
+        # width_ratio = int(rem_img.shape[1]/target_width)
+        # rem_dwn = rem_img[::width_ratio,::width_ratio,:]
 
 
         # the directory should already exist, but just in case...
@@ -259,8 +261,6 @@ def crop_and_splice(video_paths, output_dir, num_frames):
 
             # split the frame based on the crops, then put into the video
             fill_frame = np.zeros((height,width,3))
-            # put the reminder image in there
-            fill_frame[0:rem_dwn.shape[0],0:rem_dwn.shape[1],:] = rem_dwn
             for key in bounds.keys():
                 bound = bounds[key]
                 locn = target_corner[key]
@@ -281,6 +281,10 @@ def crop_and_splice(video_paths, output_dir, num_frames):
 
             # save it if it's a frame we want to label
             if i_frame in label_frames:
+                # put the reminder image in there
+                # fill_frame[0:rem_dwn.shape[0],0:rem_dwn.shape[1],:] = rem_dwn
+                cv2.putText
+                # store it
                 im_filename = vid_basename + '_' + str(i_frame).zfill(8) + '.png'
                 im_path = path.join(output_dir, im_filename) # filename with frame number
                 ret_im = cv2.imwrite(im_path,fill_frame) # write it
