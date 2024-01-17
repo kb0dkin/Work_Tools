@@ -14,6 +14,7 @@ import numpy as np
 import cv2, glob, random, argparse, time
 from typing import List
 from pprint import pprint
+from matplotlib import pyplot as plt
 
 # file explorer
 from tkinter import Tk
@@ -105,9 +106,10 @@ def bound_creator(vid:str):
         cv2.setMouseCallback('maskSelect', draw_mask)
 
         # place instruction text in the center of the image
-        text_size = cv2.getTextSize(bound_names[bound_i], 4, 3)[0]
-        center = tuple(int((img.shape[1]-text_size[0])/2),int(img.shape[0]+text_size[1]))
-        cv2.putText(img, bound_names[bound_i], center, cv2.FONT_HERSHEY_SIMPLEX, 4, (255,255,255), 3)
+        text_size = cv2.getTextSize(bound_names[bound_i], cv2.FONT_HERSHEY_DUPLEX, 4, 3)[0]
+        center = np.array(img.shape)[::-1] # flip x and y -- array wants y (vertical axis) first, cv wants x first
+        center = (int((center[0]-text_size[0])/2),int((center[1]+text_size[1])/2))
+        cv2.putText(img, bound_names[bound_i], center, cv2.FONT_HERSHEY_DUPLEX, 4, (255,255,255), 3)
         
         # limited to the number of bounds we have
         while bound_i < 5:
@@ -165,8 +167,10 @@ def draw_mask(event, x, y, flags, params):
 
         # place instruction text in the center of the image
         if bound_i < 5:
-            center = tuple(np.floor(np.array(img.shape)/2)[::-1].astype(int))
-            cv2.putText(img, bound_names[bound_i], center, cv2.FONT_HERSHEY_SIMPLEX, 4, (255,255,255), 3)
+            text_size = cv2.getTextSize(bound_names[bound_i], cv2.FONT_HERSHEY_DUPLEX, 4, 3)[0]
+            center = np.array(img.shape)[::-1] # flip x and y -- array wants y (vertical axis) first, cv wants x first
+            center = (int((center[0]-text_size[0])/2),int((center[1]+text_size[1])/2))
+            cv2.putText(img, bound_names[bound_i], center, cv2.FONT_HERSHEY_DUPLEX, 4, (255,255,255), 3)
 
 
 # split the image, put it back together
@@ -215,17 +219,10 @@ def crop_and_splice(video_paths, output_dir, num_frames):
         #south
         target_corner['south'] = [height - height_subs['south'], int((width - width_subs['south'])/2)]
 
-        # # downsampling the reminder image
-        # target_width = min(rem_img.shape[1],width_subs['west'])
-        # width_ratio = int(rem_img.shape[1]/target_width)
-        # rem_dwn = rem_img[::width_ratio,::width_ratio,:]
-
 
         # the directory should already exist, but just in case...
         if not path.exists(output_dir):
             makedirs(output_dir)
-        # if not path.exists(label_dir):
-        #     makedirs(label_dir)
 
         # how many label frames do we want per video?
         frames_rem = num_frames
@@ -259,6 +256,11 @@ def crop_and_splice(video_paths, output_dir, num_frames):
             if not ret:
                 break
 
+            # skip everything but the label frames for the moment
+            # if i_frame not in label_frames:
+            #     i_frame += 1
+            #     continue
+
             # split the frame based on the crops, then put into the video
             fill_frame = np.zeros((height,width,3))
             for key in bounds.keys():
@@ -267,7 +269,7 @@ def crop_and_splice(video_paths, output_dir, num_frames):
                 ws = width_subs[key]
                 hs = height_subs[key]
                 
-                # gamma correction to improve range
+                # gamma correction
                 frame_temp = frame[bound[0]:(bound[0]+hs), bound[1]:(bound[1]+ws),:]
                 frame_temp = ((frame_temp/255)**.6 * 255).astype(np.uint8)
 
@@ -281,9 +283,26 @@ def crop_and_splice(video_paths, output_dir, num_frames):
 
             # save it if it's a frame we want to label
             if i_frame in label_frames:
-                # put the reminder image in there
-                # fill_frame[0:rem_dwn.shape[0],0:rem_dwn.shape[1],:] = rem_dwn
-                cv2.putText
+                # some additional instructions
+                l1 = 'Label each keypoint:'
+                l2 = '    - in at least 3 views'
+                l3 = '    - only once per view'
+                b1 = 'Refer to instructions'
+                b2 = 'for view layout'
+                inst_scale = 0.5
+                top_size = cv2.getTextSize(l1, cv2.FONT_HERSHEY_SIMPLEX, inst_scale,1)[0]
+                b1_size = cv2.getTextSize(b1, cv2.FONT_HERSHEY_SIMPLEX, inst_scale,1)[0]
+                b2_size = cv2.getTextSize(b2, cv2.FONT_HERSHEY_SIMPLEX, inst_scale,1)[0]
+                b1_origin = (int(fill_frame.shape[1]-(b1_size[0]+5)),int(fill_frame.shape[0] - 2*b1_size[1])) 
+                b2_origin = (int(fill_frame.shape[1]-(b2_size[0]+5)),int(fill_frame.shape[0] - 0.5*b2_size[1]))
+                cv2.putText(fill_frame, l1, (5,int(1.5*top_size[1])), cv2.FONT_HERSHEY_SIMPLEX, inst_scale, (255,255,255))
+                cv2.putText(fill_frame, l2, (5,int(3*top_size[1])), cv2.FONT_HERSHEY_SIMPLEX, inst_scale, (255,255,255))
+                cv2.putText(fill_frame, l3, (5,int(4.5*top_size[1])), cv2.FONT_HERSHEY_SIMPLEX, inst_scale, (255,255,255))
+                cv2.putText(fill_frame, b1, b1_origin, cv2.FONT_HERSHEY_SIMPLEX, inst_scale, (255,255,255))
+                cv2.putText(fill_frame, b2, b2_origin, cv2.FONT_HERSHEY_SIMPLEX, inst_scale, (255,255,255))
+
+
+
                 # store it
                 im_filename = vid_basename + '_' + str(i_frame).zfill(8) + '.png'
                 im_path = path.join(output_dir, im_filename) # filename with frame number
@@ -294,6 +313,7 @@ def crop_and_splice(video_paths, output_dir, num_frames):
 
                 boundary_list = [[target_corner[key][0],target_corner[key][1],target_corner[key][0]+height_subs[key], target_corner[key][1] + width_subs[key]] for key in target_corner.keys()]
                 bound_fid.write(f'{im_filename}: {boundary_list}\n')
+
 
             # update the counter
             i_frame += 1
