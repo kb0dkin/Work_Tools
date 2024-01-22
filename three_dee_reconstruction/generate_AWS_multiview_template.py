@@ -8,7 +8,7 @@ def generate_AWS_template(keypoints:list, project_dir):
 	data = dict()
 	data['labels'] = keypoints
 	data['header'] = 'Label body parts of mouse in each view'
-	data['short_instructions'] = '''Label each body part in as many views as you can. Please view full instructions for examples'''
+	data['short_instructions'] = '''Label each body part in at least three views, and in as many views as you can. Please view full instructions for examples'''
 	data['full_instructions'] = 'Lorem Ipsum'
 	data['num_img'] = 5
 	data['img_bounds'] = [[0,360,640,720],[640,0,1280,360],[640,360,1280,720],[640,720,1280,1080],[1280,360,1920,720]]
