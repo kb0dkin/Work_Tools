@@ -8,14 +8,13 @@ def generate_AWS_template(keypoints:list, project_dir):
 	data = dict()
 	data['labels'] = keypoints
 	data['header'] = 'Label body parts of mouse in each view'
-	data['short_instructions'] = '''Label each body part in at least three views, and in as many views as you can. Please view full instructions for examples'''
+	data['short_instructions'] = '''Label each body part in at least three views, and in as many views as you can. <img src="https://test-3d-template.s3.us-east-2.amazonaws.com/aws_food_body_3D.png" width=100%>'''
 	data['full_instructions'] = '''
 		Label each body part per the example shown below:
-			<p> Examples and detailed instructions for each body part:</p>
-  			<img src="s3://test-3d-template/aws_food_body_3D.png" width="100%">	
+  			<img src="https://test-3d-template.s3.us-east-2.amazonaws.com/aws_food_body_3D.png" width="100%">	
 	'''
-	data['num_img'] = 5 # number of views
-	data['img_bounds'] = [[0,360,640,720],[640,0,1280,360],[640,360,1280,720],[640,720,1280,1080],[1280,360,1920,720]]
+	data['num_view'] = 5 # number of views
+	data['view_bounds'] = [[0,360,640,720],[640,0,1280,360],[640,360,1280,720],[640,720,1280,1080],[1280,360,1920,720]]
 
 	f = open(os.path.join(project_dir, 'annotation_interface.template'), 'w')
 
@@ -48,8 +47,8 @@ def generate_AWS_template(keypoints:list, project_dir):
 
 	<!----------------------------------------Script to ensure each body part is annotated exactly N times------------------------------------------------>
 	<script>
-    	var num_img = {num_img} // this is currently setup as a python f-string
-		const img_bounds = {{{{ task.input.img_bounds }}}} // does it work with a straight list?
+    	var num_view = {num_view} // this is currently setup as a python f-string
+		const view_bounds = {{{{ task.input.view_bounds }}}} // does it work with a straight list?
 
     	// create a submission callback
     	document.querySelector('crowd-form').onsubmit = function(e) {{
@@ -64,21 +63,22 @@ def generate_AWS_template(keypoints:list, project_dir):
     	}}
 
 		// check for multiple keypoints within each boundary
-    	for (var ii = 0; ii < num_img; ii++) {{
+    	for (var ii = 0; ii < num_view; ii++) {{
         	labelList = [];
         	Object.entries(keypoints).forEach(entry => {{
-            	if (within(entry[1], img_bounds[ii])) {{
-            	if (labelList.includes(entry[1].label)){{
-                	e.preventDefault();
-                	errorBox.innerHTML = '<crowd-alert type="error">'+ entry[1].label + ' is tagged multiple times in view '+ ii +'</crowd-alert>';
-                	errorBox.scrollIntoView();  
-            	}} else {{
-                	labelList = labelList.concat(entry[1].label)
-            	}}
-          
+            	if (within(entry[1], view_bounds[ii])) {{
+            		if (labelList.includes(entry[1].label)){{
+                		e.preventDefault();
+                		errorBox.innerHTML = '<crowd-alert type="error">'+ entry[1].label + ' is tagged multiple times in view '+ ii +'</crowd-alert>';
+                		errorBox.scrollIntoView();  
+            		}} else {{
+                		labelList = labelList.concat(entry[1].label)
+            		}}
             	}}
         	}})
     	}}
+
+
 
 	}};
 	</script>

@@ -20,7 +20,7 @@ def create_manifest(bucket,manifest_name='file_list.manifest'):
         if key['Key'].endswith('jpg') or key['Key'].endswith('png'):
             insert_line = f'''
                           {{ "source-ref":"s3://{bucket}/{key['Key']}",
-                           "img-bounds":"{boundaries[key['Key']]}" }}
+                           "view-bounds":"{boundaries[key['Key']]}" }}
                         '''
             filelist.append(insert_line)
 
@@ -51,7 +51,7 @@ def configure_workforce(task):
           "PreHumanTaskLambdaArn": task['arns']['prehuman_arn'],
           "MaxConcurrentTaskCount": 200,  # number of images that will be sent at a time to the workteam.
           "NumberOfHumanWorkersPerDataObject": task['price']['num_workers'],
-          "TaskAvailabilityLifetimeInSeconds": 12*60*60,  # seconds to complete all pending tasks.
+          "TaskAvailabilityLifetimeInSeconds": 12*24*60*60,  # seconds to complete all pending tasks.
           "TaskDescription": task['info']['task_description'],
           "TaskKeywords": task['info']['task_keywords'],
           "TaskTimeLimitInSeconds": 300,  # Each image must be labeled within 5 minutes.
