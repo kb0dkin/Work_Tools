@@ -177,3 +177,6 @@ cython_debug/
 
 # sleap stuff
 *.slp
+
+# sqlite
+*.sqlite
