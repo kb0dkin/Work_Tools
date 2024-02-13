@@ -1,9 +1,10 @@
 # Multi-view AWS preparation
 '''
-With a list of videos, the script will pull out some random frames,
-then create a manifest, directory with the frames clipped to only contain
-the views, and the template html for the labeling tool
+take a calibration video to create a series of calibration
+matrices and bounding boxes 
 
+we'll then store the bounding box limits and the matrices in a 
+sqlite database
 '''
 
 
@@ -31,61 +32,57 @@ bounds = {view:np.zeros((4,1)) for view in bound_names} # vertical, horizontal, 
 bound_i = 0
 
 
-def multiview_calibration_preparation(output_dir:str = None, input_vids:List[str] = None, num_frames = 100):
+def multiview_calibration_preparation(project_dir:str = None, input_vids:List[str] = None, num_frames = 100):
     '''
     Create bounding boxes and get calibration matrices using a calibration video.
     Then store the calibration in the base sqlite table
 
 
     The script currently assumes we're working with the mirror-based food enclosure,
-    so it splits the single view images (to remove all of the non-image parts) then 
-    re-combines them to create a new series of images.
+    so it splits the single view images (to remove all of the non-image parts) 
 
-    For each run it will create:
-    1. A series of images from the videos provided. Currently chosen randomly
-    2. A template HTML file for the labeling tool.
+    These bounding boxes and calibration matrices can then be applied to the mirror box
+    recordings from the same day 
 
-    [optional] args:
-    - 
     '''
 
     # create a new directory
-    output_dir = create_subfolder(output_dir)
+    project_dir = create_subfolder(project_dir)
     
     # select the videos
     if (input_vids is None) or not any([path.exists(vid) for vid in input_vids]) :
-        input_vids = select_vids(output_dir)
+        input_vids = select_vids(project_dir)
     
     # read videos, split them, then save them. 
     # might also be worth storing the 
-    crop_and_splice(input_vids, output_dir, num_frames)
+    crop_and_splice(input_vids, project_dir, num_frames)
 
 
 
-def create_subfolder(output_dir):
+def create_subfolder(project_dir):
     '''
     create a new subdirectory for the images
     '''
     # use the file explorer if we weren't given one from the command line
-    if output_dir is None:
+    if project_dir is None:
         root = Tk()
         source_path = fd.askdirectory(parent=root, title='Select the Parent Directory')
-        output_dir = path.join(source_path,'AWS_labeling_setup')
+        project_dir = path.join(source_path,'AWS_labeling_setup')
         root.destroy()
     
     # create a new directory
-    if not path.exists(output_dir):
-        makedirs(output_dir)
+    if not path.exists(project_dir):
+        makedirs(project_dir)
 
-    return output_dir
+    return project_dir
 
 
-def select_vids(output_dir):
+def select_vids(project_dir):
     '''
     Choose videos to use for the labeling job
     '''
     root = Tk()
-    input_vids = fd.askopenfilenames(parent=root, title='Videos for Labeling', initialdir=path.split(output_dir)[0])
+    input_vids = fd.askopenfilenames(parent=root, title='Videos for Labeling', initialdir=path.split(project_dir)[0])
     root.destroy()
     return input_vids
 
@@ -177,13 +174,13 @@ def draw_mask(event, x, y, flags, params):
 
 
 # split the image, put it back together
-def crop_and_splice(video_paths, output_dir, num_frames):
+def crop_and_splice(video_paths, project_dir, num_frames):
     '''
     crop a video based on the bounds given, then splice them together into a single scene. 
     
     '''
     # need to track the bounding boxes for the lambda function
-    bound_fid = open(path.join(output_dir,'boundaries.txt'), 'w+')
+    bound_fid = open(path.join(project_dir,'boundaries.txt'), 'w+')
 
     # # pull in the "reminder" image
     # rem_img = cv2.imread(os.path.join(os.getcwd(),'Reminder.drawio.png'))
@@ -224,8 +221,8 @@ def crop_and_splice(video_paths, output_dir, num_frames):
 
 
         # the directory should already exist, but just in case...
-        if not path.exists(output_dir):
-            makedirs(output_dir)
+        if not path.exists(project_dir):
+            makedirs(project_dir)
 
         # how many label frames do we want per video?
         frames_rem = num_frames
@@ -241,7 +238,7 @@ def crop_and_splice(video_paths, output_dir, num_frames):
         vid_read = cv2.VideoCapture(video_path)
         vid_dirname, vid_filename = path.split(video_path) # get the storage location and video name
         vid_basename = path.splitext(vid_filename)[0] # for the cropped video and tagging frames
-        vid_savename = path.join(output_dir,vid_basename + '_cropped.mp4') # to save the cropped file
+        vid_savename = path.join(project_dir,vid_basename + '_cropped.mp4') # to save the cropped file
         vid_write = cv2.VideoWriter(vid_savename, cv2.VideoWriter_fourcc(*'mp4v'), 50, (width, height))
 
         # get a list of frames to use -- random for now. I suppose in the future we could do K-means or PCA or something
@@ -308,7 +305,7 @@ def crop_and_splice(video_paths, output_dir, num_frames):
 
                 # store it
                 im_filename = vid_basename + '_' + str(i_frame).zfill(8) + '.png'
-                im_path = path.join(output_dir, im_filename) # filename with frame number
+                im_path = path.join(project_dir, im_filename) # filename with frame number
                 ret_im = cv2.imwrite(im_path,fill_frame) # write it
                 if not ret_im:
                     frames_rem += 1 # still need to store another frame
