@@ -8,10 +8,19 @@ def generate_AWS_template(keypoints:list, project_dir):
 	data = dict()
 	data['labels'] = keypoints
 	data['header'] = 'Label body parts of mouse in each view'
-	data['short_instructions'] = '''Label each body part in at least three views, and in as many views as you can. <img src="https://test-3d-template.s3.us-east-2.amazonaws.com/aws_food_body_3D_short.png" width=100%>'''
+	data['short_instructions'] = '''Label each body part in at least three views, and in as many views as you can. <img src="https://test-3d-template.s3.us-east-2.amazonaws.com/aws_food_body_3D_short.png" width="100%" >
+									<br> <b> Nose </b> upper tip of nose
+									<br> <b> Throat </b> bottom center of throat, right behind the jaw
+									<br> <b> Ears </b> middle front edge
+									<br> <b> Spine Center </b> upper center of back
+									<br> <b> Knees </b> front curve of each leg
+									<br> <b> Paws </b> center of knuckles on each paw
+									<br> <b> Tail Base </b> where tail meets the spine
+									<br> <b> Tail Mid </b> halfway along length of tail
+									<br> <b> Tail Tip </b> end of tail'''
 	data['full_instructions'] = '''
 		Label each body part per the example shown below:
-  			<img src="https://test-3d-template.s3.us-east-2.amazonaws.com/aws_food_body_3D.png" width="100%">	
+  			<img src="https://test-3d-template.s3.us-east-2.amazonaws.com/aws_food_body_3D.png" width="100%" >	
 	'''
 	data['num_view'] = 5 # number of views
 	data['view_bounds'] = [[0,360,640,720],[640,0,1280,360],[640,360,1280,720],[640,720,1280,1080],[1280,360,1920,720]]
@@ -47,6 +56,13 @@ def generate_AWS_template(keypoints:list, project_dir):
 
 	<!----------------------------------------Script to ensure each body part is annotated exactly N times------------------------------------------------>
 	<script>
+		var img = document.body.getElementsByTagName("img");
+		var i = 0;
+		while ( i < img_length ) {{
+			img[i].setAttribute("pagespeed_no_transform","");
+			i++;
+		}}
+
     	var num_view = {num_view} // this is currently setup as a python f-string
 		const view_bounds = {{{{ task.input.view_bounds }}}} // does it work with a straight list?
 

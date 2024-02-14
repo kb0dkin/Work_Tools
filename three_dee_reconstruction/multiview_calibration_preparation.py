@@ -47,34 +47,61 @@ def multiview_calibration_preparation(project_dir:str = None, input_vids:List[st
     '''
 
     # create a new directory
-    project_dir = create_subfolder(project_dir)
+    sql_filename = connect_to_sql(project_dir, project_sql = None)
+    if sql_filename == -1:
+        print('Could not open sqlite file')
+        return -1
+
     
     # select the videos
     if (input_vids is None) or not any([path.exists(vid) for vid in input_vids]) :
         input_vids = select_vids(project_dir)
     
-    # read videos, split them, then save them. 
-    # might also be worth storing the 
-    crop_and_splice(input_vids, project_dir, num_frames)
+    # # read videos, split them, calculate calibration matrices
+    # # then store in the sqlite database
+    # crop_and_splice(input_vids, project_dir, num_frames)
+
+    # pull out boundaries for each video 
+    for vid in input_vids:
+        bound_creator(vid = vid)
 
 
 
-def create_subfolder(project_dir):
+def connect_to_sql(project_dir:str, project_sql:str):
     '''
-    create a new subdirectory for the images
+    connect to the sql and return an open sqlite filename
     '''
-    # use the file explorer if we weren't given one from the command line
-    if project_dir is None:
+    # replace the empty project director
+    project_dir = '.' if project_dir is None else project_dir
+
+
+    # open a UI file explorer if a file wasn't given
+    if project_sql is None:
         root = Tk()
-        source_path = fd.askdirectory(parent=root, title='Select the Parent Directory')
-        project_dir = path.join(source_path,'AWS_labeling_setup')
+        project_sql = fd.askopenfilename(parent=root, title='Choose SQLite3 file', initialdir=project_dir)
         root.destroy()
-    
-    # create a new directory
-    if not path.exists(project_dir):
-        makedirs(project_dir)
+    else:
+        project_sql = path.join(project_dir,project_sql)
 
-    return project_dir
+
+
+    # does the sql database exist? If not return an error
+    if not path.exists(project_sql):
+        return -1
+
+    # can we open the file?
+    conn = sqlite3.connect(project_sql)
+    cur = conn.cursor()
+
+    cur.execute('PRAGMA table_list;')
+    if len(cur.fetchall()) == 0:
+        return -1
+    
+    # close it all, return the file path
+    cur.close()
+    conn.close()
+    return project_sql
+
 
 
 def select_vids(project_dir):
@@ -82,14 +109,15 @@ def select_vids(project_dir):
     Choose videos to use for the labeling job
     '''
     root = Tk()
-    input_vids = fd.askopenfilenames(parent=root, title='Videos for Labeling', initialdir=path.split(project_dir)[0])
+    input_vids = fd.askopenfilenames(parent=root, title='Calibration Videos', initialdir=path.split(project_dir)[0])
     root.destroy()
     return input_vids
 
 
+# define the bounding boxes
 def bound_creator(vid:str):
     '''
-    Displays a random frame in a video and has the user select different views
+    Has the user outline bounding boxes for each view
     '''
     global img, draw_img, bounds, bound_i, bound_names # don't have a better way to pass them around right now
     
@@ -173,18 +201,22 @@ def draw_mask(event, x, y, flags, params):
             cv2.putText(img, bound_names[bound_i], center, cv2.FONT_HERSHEY_DUPLEX, 4, (255,255,255), 3)
 
 
-# split the image, put it back together
+# loop through each video, take care of putting appropriate information into the database
+def video_loop(video_paths, sqlite_path):
+    
+    sql_conn = sqlite3.connect(sqlite_path)
+    sql_cur = sql_conn.cursor()
+
+
+
 def crop_and_splice(video_paths, project_dir, num_frames):
     '''
-    crop a video based on the bounds given, then splice them together into a single scene. 
+    
     
     '''
     # need to track the bounding boxes for the lambda function
     bound_fid = open(path.join(project_dir,'boundaries.txt'), 'w+')
 
-    # # pull in the "reminder" image
-    # rem_img = cv2.imread(os.path.join(os.getcwd(),'Reminder.drawio.png'))
-    # rem_img = (rem_img>125)*255 # make it black and white
     
     # for each video ....
     for i_video, video_path in enumerate(video_paths):
@@ -192,7 +224,6 @@ def crop_and_splice(video_paths, project_dir, num_frames):
         clear_bounds()
         bounds = bound_creator(video_path)
     
-        # print(view_bounds)
         # get the widths and heighths of each view 
         # debating changing all of the xyxy to xywh...
         width_subs = {key:(bounds[key][3]-bounds[key][1]) for key in bounds.keys()}
