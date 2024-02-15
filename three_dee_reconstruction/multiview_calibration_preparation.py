@@ -25,14 +25,14 @@ from tkinter import filedialog as fd
 # argument parsing
 import argparse
 
-ix = 0
-iy = 0
-drawing = 0
-img = None
-draw_img = None
-bound_names = ['north','south','east','west','center']
-bounds = {view:np.zeros((4,1)) for view in bound_names} # vertical, horizontal, height, width (treated as any other array)
-bound_i = 0
+# ix = 0
+# iy = 0
+# drawing = 0
+# img = None
+# draw_img = None
+# bound_names = ['north','south','east','west','center']
+# bounds = {view:np.zeros((4,1)) for view in bound_names} # vertical, horizontal, height, width (treated as any other array)
+# bound_i = 0
 
 
 class boundary():
@@ -57,7 +57,14 @@ class boundary():
         # just return the current view name
         return self.view_names[self.i_bound]
 
-
+class drag_drawing():
+    # class to keep the images and x/y values for the dragging interface
+    def __init__(self):
+        self.ix = 0
+        self.iy = 0
+        self.drawing = 0
+        self.img = None
+        self.draw_img = None
 
 
 
