@@ -22,6 +22,9 @@ import sqlite3
 from tkinter import Tk
 from tkinter import filedialog as fd
 
+# argument parsing
+import argparse
+
 ix = 0
 iy = 0
 drawing = 0
@@ -32,7 +35,33 @@ bounds = {view:np.zeros((4,1)) for view in bound_names} # vertical, horizontal, 
 bound_i = 0
 
 
-def multiview_calibration_preparation(project_dir:str = None, input_vids:List[str] = None, num_frames = 100):
+class boundary():
+    # class to keep track of boundaries during all of the cv2 callbacks
+    def __init__(self, view_names):
+        # initialize the whole thing
+        self.view_names = view_names # names of each of the views
+        self.bounds = {view:np.zeros((4,1)) for view in view_names} # dictionary of the boundary for each view
+        self.i_bound = 0 # view counter -- for keeping track during the callback
+
+    def print_bounds(self):
+        # print out the bounding boxes in a somewhat readable way
+        for key,value in self.bounds.items():
+            print(f'{key}: {value}')
+
+    def set_bounds(self, bounds:np.array):
+        # set the bounding box, update the counter
+        self.bounds[self.view_names[self.i_bound]] = bounds
+        self.i_bound += 1
+
+    def current_view(self):
+        # just return the current view name
+        return self.view_names[self.i_bound]
+
+
+
+
+
+def multiview_calibration_preparation(project_dir:str = '.', input_vids:List[str] = None, sql_path:str = None):
     '''
     Create bounding boxes and get calibration matrices using a calibration video.
     Then store the calibration in the base sqlite table
@@ -47,15 +76,15 @@ def multiview_calibration_preparation(project_dir:str = None, input_vids:List[st
     '''
 
     # create a new directory
-    sql_filename = connect_to_sql(project_dir, project_sql = None)
-    if sql_filename == -1:
+    sql_path = connect_to_sql(project_dir, sql_path)
+    if sql_path == -1:
         print('Could not open sqlite file')
         return -1
 
     
     # select the videos
     if (input_vids is None) or not any([path.exists(vid) for vid in input_vids]) :
-        input_vids = select_vids(project_dir)
+        input_vids = select_vids(path.split(sql_path)[0])
     
     # # read videos, split them, calculate calibration matrices
     # # then store in the sqlite database
@@ -63,34 +92,30 @@ def multiview_calibration_preparation(project_dir:str = None, input_vids:List[st
 
     # pull out boundaries for each video 
     for vid in input_vids:
-        bound_creator(vid = vid)
+        vid_bounds = bound_creator(vid = vid, view_names=['North','South','East','West','Center'])
+        vid_bounds.print_bounds()
+        sql_write(sql_path, vid_bounds)
 
 
 
-def connect_to_sql(project_dir:str, project_sql:str):
+def connect_to_sql(project_dir, sql_path):
     '''
-    connect to the sql and return an open sqlite filename
+    connect to the sql and return an sqlite filepath
     '''
-    # replace the empty project director
-    project_dir = '.' if project_dir is None else project_dir
 
+
+    if sql_path is not None and not path.exists(sql_path):
+        sql_path = path.join(project_dir, sql_path)
 
     # open a UI file explorer if a file wasn't given
-    if project_sql is None:
+    if sql_path is None or not path.exists(sql_path):
         root = Tk()
-        project_sql = fd.askopenfilename(parent=root, title='Choose SQLite3 file', initialdir=project_dir)
+        sql_path = fd.askopenfilename(parent=root, title='Choose SQLite3 file', initialdir=project_dir)
         root.destroy()
-    else:
-        project_sql = path.join(project_dir,project_sql)
 
-
-
-    # does the sql database exist? If not return an error
-    if not path.exists(project_sql):
-        return -1
 
     # can we open the file?
-    conn = sqlite3.connect(project_sql)
+    conn = sqlite3.connect(sql_path)
     cur = conn.cursor()
 
     cur.execute('PRAGMA table_list;')
@@ -100,7 +125,7 @@ def connect_to_sql(project_dir:str, project_sql:str):
     # close it all, return the file path
     cur.close()
     conn.close()
-    return project_sql
+    return sql_path
 
 
 
@@ -115,32 +140,40 @@ def select_vids(project_dir):
 
 
 # define the bounding boxes
-def bound_creator(vid:str):
+def bound_creator(vid:str, view_names):
     '''
     Has the user outline bounding boxes for each view
     '''
     global img, draw_img, bounds, bound_i, bound_names # don't have a better way to pass them around right now
-    
+    global img, draw_img # don't have a better way to pass them around right now
+
+    # create a new instance of a boundary
+    bound_instance = boundary(view_names=view_names)
+
     # pull out a single image of a single video
     cam = cv2.VideoCapture(vid)
-    ret,frame = cam.read()
-    cam.release()
+    ret,frame = cam.read() # read in a frame
+    cam.release() # release the connector
+    # clear_bounds() # clear any previous bounds
     if ret:
         img = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         draw_img = img.copy() # create a copy that's used for cleaning up the dragged rectangles
 
         # create a new window
         cv2.namedWindow('maskSelect', cv2.WINDOW_NORMAL + cv2.WINDOW_KEEPRATIO)
-        cv2.setMouseCallback('maskSelect', draw_mask)
 
         # place instruction text in the center of the image
-        text_size = cv2.getTextSize(bound_names[bound_i], cv2.FONT_HERSHEY_DUPLEX, 4, 3)[0]
+        text_size = cv2.getTextSize(bound_instance.current_view(), cv2.FONT_HERSHEY_DUPLEX, 4, 3)[0]
         center = np.array(img.shape)[::-1] # flip x and y -- array wants y (vertical axis) first, cv wants x first
         center = (int((center[0]-text_size[0])/2),int((center[1]+text_size[1])/2))
-        cv2.putText(img, bound_names[bound_i], center, cv2.FONT_HERSHEY_DUPLEX, 4, (255,255,255), 3)
-        
+        cv2.putText(img, bound_instance.current_view(), center, cv2.FONT_HERSHEY_DUPLEX, 4, (255,255,255), 3)
+
+        # connect a callback to draw the masks
+        cv2.setMouseCallback('maskSelect', draw_mask, bound_instance)
+
+
         # limited to the number of bounds we have
-        while bound_i < 5:
+        while bound_instance.i_bound < 5:
             cv2.imshow('maskSelect',img)
             k = cv2.waitKey(1) & 0xFF
             if k == 32: # escape on space key
@@ -148,7 +181,7 @@ def bound_creator(vid:str):
     
     cv2.destroyAllWindows()
 
-    return bounds
+    return bound_instance
 
 
 def clear_bounds():
@@ -170,6 +203,9 @@ def draw_mask(event, x, y, flags, params):
     '''
     global ix, iy, drawing, img, draw_img, bounds, bound_i, bound_names
 
+    # print(params)
+    bound_instance = params
+
     # on click create new rectangle
     if event == cv2.EVENT_LBUTTONDOWN:
         # draw_img=img.copy() # store current status of image
@@ -190,23 +226,32 @@ def draw_mask(event, x, y, flags, params):
         cv2.rectangle(img, (ix,iy), (x,y), (255,255,255), 3)
         
         # update the list of view boundaries 
-        bounds[bound_names[bound_i]] = np.array([min(iy,y),min(ix,x),max(iy,y),max(ix,x)])
-        bound_i += 1
+        bound_instance.set_bounds(np.array([min(iy,y),min(ix,x),max(iy,y),max(ix,x)]))
+        # bounds[bound_names[bound_i]] = np.array([min(iy,y),min(ix,x),max(iy,y),max(ix,x)])
+        # bound_instance.i_bound += 1
+        # bound_i += 1
 
         # place instruction text in the center of the image
-        if bound_i < 5:
-            text_size = cv2.getTextSize(bound_names[bound_i], cv2.FONT_HERSHEY_DUPLEX, 4, 3)[0]
+        if bound_instance.i_bound < 5:
+            text_size = cv2.getTextSize(bound_instance.current_view(), cv2.FONT_HERSHEY_DUPLEX, 4, 3)[0]
             center = np.array(img.shape)[::-1] # flip x and y -- array wants y (vertical axis) first, cv wants x first
             center = (int((center[0]-text_size[0])/2),int((center[1]+text_size[1])/2))
-            cv2.putText(img, bound_names[bound_i], center, cv2.FONT_HERSHEY_DUPLEX, 4, (255,255,255), 3)
+            cv2.putText(img, bound_instance.current_view(), center, cv2.FONT_HERSHEY_DUPLEX, 4, (255,255,255), 3)
 
 
 # loop through each video, take care of putting appropriate information into the database
-def video_loop(video_paths, sqlite_path):
-    
+def sql_write(sqlite_path, vid_bounds):
+    # connect to the sqlite db    
     sql_conn = sqlite3.connect(sqlite_path)
     sql_cur = sql_conn.cursor()
 
+    # format the sql insertion
+    sql_query = f""
+
+
+# create the intrinsic and extrinsic calibration matrices for a video
+# from charuco boards
+# def matrix_creator(video_path, )
 
 
 def crop_and_splice(video_paths, project_dir, num_frames):
@@ -363,4 +408,18 @@ def crop_and_splice(video_paths, project_dir, num_frames):
 
 # arg parsing to run from the command line or just call straight
 if __name__ == '__main__':
-    multi_view_preparation()
+    '''
+    Create bounding boxes and calibration matrices from a calibration video.
+    '''
+
+
+
+    # parsing them args
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-s','--sql', help='SQLite3 file name or path', default=None)
+    parser.add_argument('--directory',help='Project Base Directory', default=None)
+    parser.add_argument('-v','--video',help='Calibration video', default=None)
+
+    args = parser.parse_args()
+
+    multiview_calibration_preparation(project_dir=args.directory, input_vids=args.video, sql_path=args.sql)
