@@ -8,7 +8,7 @@ def generate_AWS_template(keypoints:list, project_dir):
 	data = dict()
 	data['labels'] = keypoints
 	data['header'] = 'Label body parts of mouse in each view'
-	data['short_instructions'] = '''Label each body part in at least three views, and in as many views as you can. <img src="https://test-3d-template.s3.us-east-2.amazonaws.com/aws_food_body_3D_short.png" width="100%" >
+	data['short_instructions'] = '''Label each body part in as many views as you can. <img src="https://test-3d-template.s3.us-east-2.amazonaws.com/aws_food_body_3D_short.png" width="100%" >
 									<br> <b> Nose </b> upper tip of nose
 									<br> <b> Throat </b> bottom center of throat, right behind the jaw
 									<br> <b> Ears </b> middle front edge
