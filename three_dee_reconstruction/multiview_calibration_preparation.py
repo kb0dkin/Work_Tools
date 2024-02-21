@@ -17,6 +17,7 @@ from pprint import pprint
 from matplotlib import pyplot as plt
 import sqlite3
 import json # turning the dictionaries etc into something clean for sqlite
+import pickle
 
 # file explorer
 from tkinter import Tk
@@ -24,15 +25,6 @@ from tkinter import filedialog as fd
 
 # argument parsing
 import argparse
-
-ix = 0
-iy = 0
-drawing = 0
-img = None
-draw_img = None
-# bound_names = ['north','south','east','west','center']
-# bounds = {view:np.zeros((4,1)) for view in bound_names} # vertical, horizontal, height, width (treated as any other array)
-# bound_i = 0
 
 
 class boundary():
@@ -57,9 +49,9 @@ class boundary():
         # just return the current view name
         return self.view_names[self.i_bound]
     
-    def jsonify(self):
-        # return a json version of the boundary dictionary
-        return json.dumps(self.bounds)
+    def pkl_it(self):
+        # pickle the dictionary
+        return pickle.dumps(self.bounds)
 
 class drag_drawing():
     # class to keep the images and x/y values for the dragging interface
@@ -78,8 +70,6 @@ class calibration_data():
         self.distortion_coefficients = {view:[] for view in view_names}
         self.rotation_vectors = {view:[] for view in view_names}
         self.translation_vectors = {view:[] for view in view_names}
-
-
 
 
 # class to keep track of all of the chAruco board stuff
@@ -130,11 +120,8 @@ def multiview_calibration_preparation(project_dir:str = '.', input_vids:List[str
         # pull out boundaries for each video 
         vid_bounds = bound_creator(vid = vid, view_names=view_names)
         
-        # find the calibration matrices
-        # crop_and_calc(vid = vid, bounds = vid_bounds)
-       
         # write to sql
-        sql_write(sql_path, vid_bounds)
+        sql_write(sql_path, vid_bounds, vid, project_dir)
 
 
 
@@ -270,39 +257,38 @@ def draw_mask(event, x, y, flags, params):
 
 
 # write view bounds and matrices for each view to the sqlite database
-def sql_write(sqlite_path, view_bounds):
+def sql_write(sqlite_path:str, view_bounds:boundary, vid_name:str, project_dir:str):
     # connect to the sqlite db    
     sql_conn = sqlite3.connect(sqlite_path)
     sql_cur = sql_conn.cursor()
 
-    
+    vid_relative = vid_name.strip(project_dir)
 
     # format the sql insertion
-    sql_query = f""
+    sql_query = '''INSERT INTO calibration (relative_path, boundary) VALUES (?, ?) ;'''
+
+    print(sql_query)
+    sql_cur.execute(sql_query, (vid_relative, view_bounds.pkl_it()))
+    sql_conn.commit()
+
+    # sql_cur.close()
+    sql_conn.close()
 
 
-# main function to handle the calibration matrices etc
-def crop_and_calc(video, bounds, calibration):
+# # main function to handle the calibration matrices etc
+# def crop_and_calc(video, bounds, calibration):
 
-    # instance of the chAruco board
-    charuco_instance = chAruco_board()
+#     # instance of the chAruco board
+#     charuco_instance = chAruco_board()
 
-    # dictionary to keep the frames as we crop them
-    images = {view:[] for view in bounds.view_names}
+#     # dictionary to keep the frames as we crop them
+#     images = {view:[] for view in bounds.view_names}
 
-    # open the video, pull in images and crop
-    cam = cv2.VideoCapture(video)
-    ret,frame = cam.read() # read in a frame
-    while ret: # keep reading until we run out of frames
-        
-
-
-
-
-
-    
-
-
+#     # open the video, pull in images and crop
+#     cam = cv2.VideoCapture(video)
+#     ret,frame = cam.read() # read in a frame
+#     while ret: # keep reading until we run out of frames
+#         pass
 
 
 # find  location of the chessboard in each image

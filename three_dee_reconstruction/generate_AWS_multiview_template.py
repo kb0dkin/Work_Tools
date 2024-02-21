@@ -19,8 +19,7 @@ def generate_AWS_template(keypoints:list, project_dir):
 									<br> <b> Tail Mid </b> halfway along length of tail
 									<br> <b> Tail Tip </b> end of tail'''
 	data['full_instructions'] = '''
-		Label each body part per the example shown below:
-  			<img src="https://test-3d-template.s3.us-east-2.amazonaws.com/aws_food_body_3D.png" width="100%" >	
+  		<img src="https://test-3d-template.s3.us-east-2.amazonaws.com/aws_food_body_3D.png" width="100%" >	
 	'''
 	data['num_view'] = 5 # number of views
 	data['view_bounds'] = [[0,360,640,720],[640,0,1280,360],[640,360,1280,720],[640,720,1280,1080],[1280,360,1920,720]]
