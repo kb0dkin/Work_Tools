@@ -52,6 +52,14 @@ class boundary():
     def pkl_it(self):
         # pickle the dictionary
         return pickle.dumps(self.bounds)
+    
+    def jsonify(self):
+        # turn the arrays into lists, then json dump string
+        json_dict = {}
+        for key in self.bounds.keys(): # swap everything to lists
+            json_dict[key] = self.bounds[key].tolist()
+
+        return json.dumps(json_dict) # swap to json
 
 class drag_drawing():
     # class to keep the images and x/y values for the dragging interface
@@ -262,16 +270,18 @@ def sql_write(sqlite_path:str, view_bounds:boundary, vid_name:str, project_dir:s
     sql_conn = sqlite3.connect(sqlite_path)
     sql_cur = sql_conn.cursor()
 
+    print(project_dir)
+
     vid_relative = vid_name.strip(project_dir)
 
     # format the sql insertion
     sql_query = '''INSERT INTO calibration (relative_path, boundary) VALUES (?, ?) ;'''
 
     print(sql_query)
-    sql_cur.execute(sql_query, (vid_relative, view_bounds.pkl_it()))
+    # sql_cur.execute(sql_query, (vid_relative, view_bounds.pkl_it()))
+    sql_cur.execute(sql_query, (vid_relative, view_bounds.jsonify()))
     sql_conn.commit()
 
-    # sql_cur.close()
     sql_conn.close()
 
 

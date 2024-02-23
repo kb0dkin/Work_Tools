@@ -20,6 +20,9 @@ from matplotlib import pyplot as plt
 from tkinter import Tk
 from tkinter import filedialog as fd
 
+import sqlite3
+
+
 ix = 0
 iy = 0
 drawing = 0
@@ -38,11 +41,13 @@ def multi_view_preparation(output_dir:str = None, input_vids:List[str] = None, n
     so it splits the single view images (to remove all of the non-image parts) then 
     re-combines them to create a new series of images.
 
-    For each run it will create:
-    1. A series of images from the videos provided. Currently chosen randomly
-    2. A template HTML file for the labeling tool.
+    For each it will pull in the boundaries in the associated sqlite directory
 
     [optional] args:
+    - output_dir    :   where do we store the frames? Opens a GUI dialog if not specified
+    - input_vids    :   videos to clip. Opens a GUI dialog if not specified
+    - sql_file      :   sqlite file that contains the boundaries
+    - calib_file    :   calibration file name. Chooses the date closest to 
     - 
     '''
 
@@ -85,6 +90,19 @@ def select_vids(output_dir):
     input_vids = fd.askopenfilenames(parent=root, title='Videos for Labeling', initialdir=path.split(output_dir)[0])
     root.destroy()
     return input_vids
+
+
+def bound_puller(sql_filename, vid_filename):
+    '''
+    get the boundaries of the file from the most recent video
+    '''
+    if not path.exists(sql_filename):
+        return -1
+    
+    conn = sqlite3.connect(sql_filename) # create connector
+    cur = conn.cursor()
+
+    aa = cur.execute()
 
 
 def bound_creator(vid:str):
@@ -174,7 +192,7 @@ def draw_mask(event, x, y, flags, params):
 
 
 # split the image, put it back together
-def crop_and_splice(video_paths, output_dir, num_frames):
+def crop_and_splice(video_paths, output_dir, num_frames, sql_filename):
     '''
     crop a video based on the bounds given, then splice them together into a single scene. 
     
@@ -182,16 +200,11 @@ def crop_and_splice(video_paths, output_dir, num_frames):
     # need to track the bounding boxes for the lambda function
     bound_fid = open(path.join(output_dir,'boundaries.txt'), 'w+')
 
-    # # pull in the "reminder" image
-    # rem_img = cv2.imread(os.path.join(os.getcwd(),'Reminder.drawio.png'))
-    # rem_img = (rem_img>125)*255 # make it black and white
-    
     # for each video ....
     for i_video, video_path in enumerate(video_paths):
-        # locations of views
-        clear_bounds()
-        bounds = bound_creator(video_path)
-    
+        # pull bounding boxes from the sqlite database
+        view_bounds = bound_puller(sql_filename)
+
         # print(view_bounds)
         # get the widths and heighths of each view 
         # debating changing all of the xyxy to xywh...
