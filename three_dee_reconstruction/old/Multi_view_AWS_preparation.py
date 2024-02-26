@@ -20,7 +20,11 @@ from matplotlib import pyplot as plt
 from tkinter import Tk
 from tkinter import filedialog as fd
 
+# connecting to sqlite
 import sqlite3
+
+# arg parsing
+import argparse
 
 
 ix = 0
@@ -33,7 +37,7 @@ bounds = {view:np.zeros((4,1)) for view in bound_names} # vertical, horizontal, 
 bound_i = 0
 
 
-def multi_view_preparation(output_dir:str = None, input_vids:List[str] = None, num_frames = 100):
+def multi_view_preparation(output_dir:str = None, input_vids:List[str] = None, sql_file:str = None, num_frames:int = 100):
     '''
     Put together everything needed for a multi-view AWS labeling setup.
 
@@ -46,9 +50,9 @@ def multi_view_preparation(output_dir:str = None, input_vids:List[str] = None, n
     [optional] args:
     - output_dir    :   where do we store the frames? Opens a GUI dialog if not specified
     - input_vids    :   videos to clip. Opens a GUI dialog if not specified
-    - sql_file      :   sqlite file that contains the boundaries
-    - calib_file    :   calibration file name. Chooses the date closest to 
-    - 
+    - sql_file      :   sqlite file that contains the boundaries. Opens GUI if not found
+    - calib_file    :   calibration file name. Default chooses the most recent calib video
+    - num_frames    :   number of frames to output. Default 100
     '''
 
     # create a new directory
@@ -57,10 +61,22 @@ def multi_view_preparation(output_dir:str = None, input_vids:List[str] = None, n
     # select the videos
     if (input_vids is None) or not any([path.exists(vid) for vid in input_vids]) :
         input_vids = select_vids(output_dir)
-    
+
+    # select the sqlite file
+    if sql_file is None:
+        root = Tk()
+        sql_file = fd.askopenfilename(parent=root, initialdir=output_dir, title='Select sqlite3 file')
+        root.destroy()
+        
+    # now grab the bounds for the selected video
+    # for video in input_vids:
+    #     boundary = bound_puller(sql_filename=sql_file, vid_filename=video)
+    #     # print(f'{video}, {boundary}')
+
+
     # read videos, split them, then save them. 
     # might also be worth storing the 
-    crop_and_splice(input_vids, output_dir, num_frames)
+    crop_and_splice(input_vids, output_dir, num_frames, sql_file)
 
 
 
@@ -102,7 +118,23 @@ def bound_puller(sql_filename, vid_filename):
     conn = sqlite3.connect(sql_filename) # create connector
     cur = conn.cursor()
 
-    aa = cur.execute()
+    vid_short = path.split(vid_filename)[-1]
+
+    # get the date of the video
+    sql_query = "SELECT DATE(s.time), v.relative_path FROM session as s, videos as v WHERE v.relative_path LIKE ? AND s.rowid=v.session_id ;"
+    response_video = np.array(cur.execute(sql_query,('%'+vid_short,)).fetchall())
+    video_date = response_video[0,0].astype(np.datetime64) # convert to datetime for math
+    
+    # get all of the dates of the calibration videos
+    sql_query = "SELECT DATE(c.date), c.boundary FROM calibration as c;"
+    response_calibration = np.array(cur.execute(sql_query).fetchall())
+    calib_date = response_calibration[:,0].astype(np.datetime64) # convert to datetime for math
+
+    # find the associated calibration date
+    date_diffs = (video_date-calib_date).astype(np.int8) # how long has passed since the calibration?
+    calib_i = np.where(date_diffs < 0, np.inf, date_diffs).argmin() # find the most recent calibration (but not recorded after video)
+
+    return response_calibration[calib_i,1] # return the bounding boxes
 
 
 def bound_creator(vid:str):
@@ -192,18 +224,18 @@ def draw_mask(event, x, y, flags, params):
 
 
 # split the image, put it back together
-def crop_and_splice(video_paths, output_dir, num_frames, sql_filename):
+def crop_and_splice(video_paths:List[str], output_dir:str, num_frames:int, sql_filename:str):
     '''
     crop a video based on the bounds given, then splice them together into a single scene. 
     
     '''
-    # need to track the bounding boxes for the lambda function
+    # the "target" view boundaries -- for the crop and splice version of the frame
     bound_fid = open(path.join(output_dir,'boundaries.txt'), 'w+')
 
     # for each video ....
     for i_video, video_path in enumerate(video_paths):
         # pull bounding boxes from the sqlite database
-        view_bounds = bound_puller(sql_filename)
+        bounds = bound_puller(sql_filename, video_path)
 
         # print(view_bounds)
         # get the widths and heighths of each view 
@@ -345,4 +377,18 @@ def crop_and_splice(video_paths, output_dir, num_frames, sql_filename):
 
 # arg parsing to run from the command line or just call straight
 if __name__ == '__main__':
-    multi_view_preparation()
+    '''
+    Extracts frames for the multiview recording setup for AWS labeling, 
+    then crops them from the associated calibration video.
+    '''
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('-o', '--outputdir', default=None, help='Output directory for frames pulled for labeling')
+    parser.add_argument('-s', '--sqlfile', default=None, help='SQLite3 file name.')
+    parser.add_argument('-n', '--numframes', default=100, help='Number of frames to extract', type=int)
+    parser.add_argument('--inputvids', default=None, action='append', help='Videos for labeling. One flag per video')
+
+    args = parser.parse_args()
+
+    multi_view_preparation(output_dir=args.outputdir, input_vids=args.inputvids, num_frames=args.numframes, sql_file=args.sqlfile)
