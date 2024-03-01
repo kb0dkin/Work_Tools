@@ -124,11 +124,11 @@ def annot_splitter(manifest_path:str, boundaries:dict, image_dir:str):
 
 # pull 
 def label_view_parser(label_pd, boundaries:dict):
-    label_view = []
 
     # find which view the label is in:
     for view,boundary in boundaries.items():
-        print(f'{label_pd.x}: {label_pd.x < boundary[0]}')
+        within = (label_pd.x > boundary[0]) and (label_pd.x < boundary[2]) and (label_pd.y > boundary[1]) and (label_pd.y < boundary[3])
+        
         # if label_pd.x < boundary[0] and label_pd.x > boundary[2] and label_pd.y > boundary[1] and label_pd.y > boundary[3]:
         #     label_view.append(view)
 
