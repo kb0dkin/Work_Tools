@@ -43,7 +43,7 @@ def output_manifest_processing(manifest_path:str, image_directory:str, output_ty
     # split the images according to the boundaries
     # image_splitter(image_directory, boundaries)
 
-    # parse the annotations, split into different views
+    # parse the annotations, split into different views, put output json in image_directory
     annot_splitter(manifest_path, boundaries, image_directory)
 
 
@@ -132,7 +132,7 @@ def splitter(image_directory:str, boundaries:dict, manifest_path):
                 for key,bound in boundary.items(): # for each boundary
                     im_crop = image[bound[0]:bound[2],bound[1]:bound[3]] # crop the image
                     im_crop = view_flipper(im_crop, key).astype(np.uint8)
-                    crop_fn = os.path.join(subdir,f'{os.path.splitext(im_basename)[0]}_{key}.png')
+                    crop_fn = os.path.join(subdir,f'{os.path.splitext(image_name)[0]}_{key}.png')
                     cv2.imwrite(crop_fn, im_crop)
 
 
@@ -141,13 +141,13 @@ def splitter(image_directory:str, boundaries:dict, manifest_path):
 
 # flip views to account for the whole "mirror" thing
 def view_flipper(image, view_name:str):
-    if view_name == 'South': # if south flip LR
+    if view_name.lower() == 'south': # if south flip LR
         return image[:,::-1,:]
-    elif view_name == 'North': # if north flip top to bottom
+    elif view_name.lower() == 'north': # if north flip top to bottom
         return image[::-1,:,:]
-    elif view_name == 'East': # if east transpose
+    elif view_name.lower() == 'east': # if east transpose
         return image.transpose((1,0,2))
-    elif view_name == 'West': # the "anti-transpose" per Math Overflow haha
+    elif view_name.lower() == 'west': # the "anti-transpose" per Math Overflow haha
         return image[::-1].transpose(1,0,2)[::-1]
     else: # should be center otherwise
         return image
@@ -167,19 +167,10 @@ def annot_splitter(manifest_path:str, boundaries:dict, image_dir:str):
             image_name = os.path.split(data['source-ref'])[-1]
             boundary = boundaries[image_name]
             
-            # if 'annotatedResult' in data.keys():
-            if 'test-3d-data-20240213' in data.keys():
-                # data = data['annotatedResult']
-                data = data['test-3d-data-20240213']
-
-                # # skip rest of loop for the moment
-                # print(data)
-                # continue
-
-                # entry for each view -- will turn into a list of dicts later to put
-                # into the main list but we need to be able to revisit the images
-                # for multiple workers
-                entries = {}
+            if 'annotatedResult' in data.keys():
+            # if 'test-3d-data-20240213' in data.keys():
+                data = data['annotatedResult']
+                # data = data['test-3d-data-20240213']
 
                 # append data from all of the workers together
                 data_df = pd.DataFrame()
@@ -195,54 +186,119 @@ def annot_splitter(manifest_path:str, boundaries:dict, image_dir:str):
                     subimage = os.path.splitext(image_name)[0] + '_' + bound_name + '.png'
 
                     # pop out the appropriate labels
-                    # print(data_df.x.between(bound[0], bound[2]) & data_df.y.between(bound[1], bound[3]))
                     bounded_df = data_df.iloc[(data_df.x.between(bound[0], bound[2]) & data_df.y.between(bound[1], bound[3])).values]
 
-                    # pull x and y into a list of lists -- grouped by worker
-                    labels_x = bounded_df.groupby('worker_id')['x'].apply(list).values
-                    labels_y = bounded_df.groupby('worker_id')['y'].apply(list).values
 
-                    # means
-                    means_x = bounded_df.groupby('worker_id')['x'].mean()
-                    means_y = bounded_df.groupby('worker_id')['y'].mean()
-
-                    # variance
-                    vars_x = bounded_df.groupby('worker_id')['x'].var()
-                    vars_y = bounded_df.groupby('worker_id')['y'].var()
+                    # split label into a dict
+                    label_dict,(width, height) = make_dict(bounded_df, bound, bound_name)
                     
-                    print(f'x: {labels_x}')
-                    print(f'y: {labels_y}')
+                    # assemble the full entry
+                    entry_dict = {
+                                'image': os.path.join(image_dir, subimage),
+                                'height': height,
+                                'width': width,
+                                'ann': label_dict,
+                                'ann_label': bounded_df['label'].unique(),
+                                'frame_id': os.path.join(image_dir, subimage),
+                    }
 
-                    # worker_data = pd.DataFrame.from_dict(eval(worker_entry['annotationData']['content'])['annotatedResult']['keypoints'])
-                    # label_view_parser(worker_data, boundary)
-                    # worker_data.loc[:,'view'] = label_view_parser(worker_data, boundary)
-                    # print(worker_data)
+                    label_list.append(entry_dict)
 
-
-# split the labels by view, and manipulate as needed 
-def label_view_parser(label_pd, boundaries:dict):
-    print(label_pd)
-
-    for b_name, boundary in boundaries.items():
-        label_pd[b_name] = label_pd.x.between(boundary[0], boundary[2]) & label_pd.y.between(boundary[1], boundary[3])
-
-    print(label_pd)
-
-    # for each label set (will have labels from multiple views):
-    # for label in label_pd:
+    with open(os.path.join(image_dir, 'processed_keypoints.json'), 'w') as fid:
+        json.dump(label_list, fid)
+    # return label_list
 
 
+def make_dict(bounded_df, bound, bound_name):
 
 
-    # # find which view the label is in:
-    # for view,boundary in boundaries.items():
-    #     within = (label_pd.x > boundary[0]) and (label_pd.x < boundary[2]) and (label_pd.y > boundary[1]) and (label_pd.y < boundary[3])
-        
-    #     # if label_pd.x < boundary[0] and label_pd.x > boundary[2] and label_pd.y > boundary[1] and label_pd.y > boundary[3]:
-    #     #     label_view.append(view)
+    # pull x and y into a list of lists -- grouped by worker
+    label_df,(width, height) = label_view_parser(bounded_df, bound, bound_name)
+    labels_x = label_df.groupby('worker_id')['x'].apply(lambda x: x.values.tolist()).values
+    labels_y = label_df.groupby('worker_id')['y'].apply(lambda x: x.values.tolist()).values
 
-    # return label_view
+    # meds
+    med_x = label_df.groupby('label')['x'].median()
+    med_y = label_df.groupby('label')['y'].median()
 
+    # means
+    mu_x = label_df.groupby('label')['x'].mean()
+    mu_y = label_df.groupby('label')['y'].mean()
+
+    # stdiance
+    std_x = label_df.groupby('label')['x'].std()
+    std_y = label_df.groupby('label')['y'].std()
+
+    # bounding box 
+    # length for each side will be 0.6 * dist between extrema of medians
+    Bx_off = abs(max(med_x)-min(med_x)) * 0.3 # offsets for bounding box
+    By_off = abs(max(med_y)-min(med_y)) * 0.3 # offsets for bounding box
+    B_xmin = max([0, min(med_x) - Bx_off]) # don't go below 0
+    B_xmax = min([bound[2], max(med_x) + Bx_off]) # don't go above width of image
+    B_ymin = max([0, min(med_y) - By_off])
+    B_ymax = min([bound[3], max(med_y) + By_off])
+    B_area = (B_xmax - B_xmin)*(B_ymax - B_ymin)
+
+
+    label_dict = {'X': labels_x.tolist(),
+                  'Y': labels_y.tolist(),
+                  'bbox': np.array([B_xmin, B_xmax, B_ymin, B_ymax]).tolist(),
+                  'med': np.array([med_y, med_x]).tolist(),
+                  'mu': np.array([mu_y, mu_x]).tolist(),
+                  'std': np.array([std_y, std_x]).tolist(),
+                  'area': [B_area]
+                  }
+    
+    print(label_dict)
+    
+
+    return label_dict, (width, height)
+    
+
+# adjust the label points to account for rotating/reflecting the mirrors
+def label_view_parser(bounded_df:pd.DataFrame, bound, bound_name:str):
+    label_df = bounded_df.copy() # label_df == corrected dataframe
+
+    if bound_name.lower() == 'center': # fit to boundaries
+        label_df.x -= bound[0]
+        label_df.y -= bound[1]
+        # width and height -- to swap if we rotate the image
+        width = bound[2] - bound[0]
+        height = bound[3] - bound[1]
+    
+    if bound_name.lower() == 'north': # fit and flip vertically
+        label_df.x -= bound[0]
+        label_df.y = bound[3] - label_df.y
+        # width and height -- to swap if we rotate the image
+        width = bound[2] - bound[0]
+        height = bound[3] - bound[1]
+
+    if bound_name.lower() == 'south': # fit and flip horizontally
+        label_df.x = bound[2] - label_df.x
+        label_df.y -= bound[1]
+        # width and height -- to swap if we rotate the image
+        width = bound[2] - bound[0]
+        height = bound[3] - bound[1]
+    
+    if bound_name.lower() == 'east': # transpose cropped x and y
+        temp_y = label_df.x - bound[0] # future y == cropped (old) x
+        label_df.x = label_df.y - bound[1] # x == cropped (old) y
+        label_df.y = temp_y # should be a pd series
+        # width and height -- to swap if we rotate the image
+        height = bound[2] - bound[0]
+        width = bound[3] - bound[1]
+
+    if bound_name.lower() == 'west': # "anti-transpose"
+        # I think this is x = maxY - y, y = maxX - x
+        temp_y = bound[2]-label_df.x
+        label_df.x = bound[3] - label_df.y
+        label_df.y = temp_y
+        # width and height -- to swap if we rotate the image
+        height = bound[2] - bound[0]
+        width = bound[3] - bound[1]
+
+
+    return label_df, (width, height)
 
 
 # turn it into a mars json
