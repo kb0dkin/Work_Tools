@@ -40,13 +40,8 @@ def output_manifest_processing(manifest_path:str, image_directory:str, output_ty
     with open(os.path.join(image_directory,'boundaries.txt')) as fid:
         boundaries = {line.split(':')[0]:bound_list2dict(eval(line.split(':')[1])) for line in fid.readlines()}
 
-    # # split the images according to the boundaries
-    # image_splitter(image_directory, boundaries)
 
-    # # parse the annotations, split into different views, put output json in image_directory
-    # annot_splitter(manifest_path, boundaries, image_directory)
-        
-    # joined splitter
+    # split images and labels into different views, save images and json
     splitter(manifest_path, boundaries, image_directory)
 
 
@@ -68,14 +63,18 @@ def splitter(manifest_path:str, boundaries:dict, image_dir:str):
     # image_list = [item for file in ['*.jpg','*.tiff','*.png'] for item in glob.glob(os.path.join(image_directory,file))]
     
     # make a directory for the split files
-    subdir = os.path.join(image_dir,'split')
-    if not os.path.exists(subdir):
-        os.mkdir(subdir)  # create a subdirectory
+    subdir_below = os.path.join(image_dir,'below')
+    subdir_side = os.path.join(image_dir, 'side')
+    if not os.path.exists(subdir_below):
+        os.mkdir(subdir_below)  # create a subdirectory
+    if not os.path.exists(subdir_side):
+        os.mkdir(subdir_side)  # create a subdirectory
 
     # open the manifest
     with open(manifest_path, 'r') as manifest_fid:
         # list of dicts for the labels
-        label_list = []
+        label_list_below = []
+        label_list_side = []
 
         for line in manifest_fid.readlines():
             data = json.loads(line)
@@ -114,6 +113,11 @@ def splitter(manifest_path:str, boundaries:dict, image_dir:str):
                     # which subimage?
                     subimage = os.path.splitext(image_name)[0] + '_' + bound_name + '.png'
 
+                    if bound_name.lower() == 'center':
+                        subdir = subdir_below
+                    else:
+                        subdir = subdir_side
+
                     # pop out the appropriate labels
                     bounded_df = data_df.iloc[(data_df.x.between(bound[1], bound[3]) & data_df.y.between(bound[0], bound[2])).values]
 
@@ -132,53 +136,33 @@ def splitter(manifest_path:str, boundaries:dict, image_dir:str):
                                 'width': width,
                                 'ann_label': bounded_df['label'].unique().tolist(),
                                 'frame_id': os.path.join(subdir, subimage),
-                                'ann_': label_dict,
+                                'ann_black': label_dict,
                     }
 
-                    label_list.append(entry_dict)
 
                     # split out the boundary portion of this image
                     im_crop = image[bound[0]:bound[2],bound[1]:bound[3]] # crop the image
                     im_crop = view_flipper(im_crop, bound_name).astype(np.uint8)
-                    cv2.imwrite(os.path.join(subdir, subimage), im_crop)
+
+                    # save 'center' views separately from 'side' views
+                    if bound_name.lower() == 'center':
+                        cv2.imwrite(os.path.join(subdir_below, subimage), im_crop)
+                        label_list_below.append(entry_dict)
+                    else:
+                        cv2.imwrite(os.path.join(subdir_side, subimage), im_crop)
+                        label_list_side.append(entry_dict)
 
             # if there aren't any labels in the output manifest...
             else:
                 print(f'No data for {image_name} found in output manifest')
 
 
-    # save the label list
-    with open(os.path.join(subdir, 'processed_keypoints.json'), 'w') as fid:
-        json.dump(label_list, fid)
+    # save the label lists
+    with open(os.path.join(subdir_below, 'processed_keypoints.json'), 'w') as fid:
+        json.dump(label_list_below, fid)
+    with open(os.path.join(subdir_side, 'processed_keypoints.json'), 'w') as fid:
+        json.dump(label_list_side, fid)
 
-
-
-
-# split the images and flip/rotate the side views as needed
-def image_splitter(image_directory:str, boundaries:dict):
-    # create a list -- double list comprehension to flatten it
-    image_list = [item for file in ['*.jpg','*.tiff','*.png'] for item in glob.glob(os.path.join(image_directory,file))]
-
-    # make a directory for the split files
-    subdir = os.path.join(image_directory,'split')
-    if not os.path.exists(subdir):
-        os.mkdir(subdir)  # create a subdirectory
-
-    # iterate through each image
-    for image_fn in image_list:
-        image = cv2.imread(image_fn) # open the image
-        im_basename = os.path.split(image_fn)[-1] # for dictionary keys, cropped image names etc
-        
-        if im_basename not in boundaries.keys(): # skip this image if it's not in the boundary list
-            print(f'{im_basename} not found in boundaries.txt')
-            continue
-
-        boundary = boundaries[im_basename] # get the boundaries for this image
-        for key,bound in boundary.items(): # for each boundary
-            im_crop = image[bound[0]:bound[2],bound[1]:bound[3]] # crop the image
-            im_crop = view_flipper(im_crop, key).astype(np.uint8)
-            crop_fn = os.path.join(subdir,f'{os.path.splitext(im_basename)[0]}_{key}.png')
-            cv2.imwrite(crop_fn, im_crop)
 
 
 # flip views to account for the whole "mirror" thing
@@ -194,65 +178,6 @@ def view_flipper(image, view_name:str):
     else: # should be center otherwise
         return image
 
-
-# split annotations per the boundaries
-def annot_splitter(manifest_path:str, boundaries:dict, image_dir:str):
-    
-    with open(manifest_path, 'r') as manifest_fid:
-        # list of dicts for the labels
-        label_list = []
-
-        for line in manifest_fid.readlines():
-            data = json.loads(line)
-            
-            # pull out image name, get the boundaries for this image
-            image_name = os.path.split(data['source-ref'])[-1]
-            boundary = boundaries[image_name]
-            
-            if 'annotatedResult' in data.keys():
-            # if 'test-3d-data-20240213' in data.keys():
-                data = data['annotatedResult']
-                # data = data['test-3d-data-20240213']
-
-                # append data from all of the workers together
-                data_df = pd.DataFrame()
-                for worker_entry in data['annotationsFromAllWorkers']:
-                    # parse out the info
-                    worker_df = pd.DataFrame.from_dict(eval(worker_entry['annotationData']['content'])['annotatedResult']['keypoints'])
-                    worker_df['worker_id'] = worker_entry['workerId']
-                    data_df = pd.concat([data_df, worker_df], ignore_index = True)
-
-                # create a sublist and run through each view.
-                for bound_name, bound in boundary.items():
-                    # which subimage?
-                    subimage = os.path.splitext(image_name)[0] + '_' + bound_name + '.png'
-
-                    # pop out the appropriate labels
-                    bounded_df = data_df.iloc[(data_df.x.between(bound[1], bound[3]) & data_df.y.between(bound[0], bound[2])).values]
-
-                    # skip the rest of this if there isn't any labeling 
-                    # in the view
-                    if len(bounded_df) == 0:
-                        continue
-
-                    # split label into a dict
-                    label_dict,(width, height) = make_dict(bounded_df, bound, bound_name)
-                    
-                    # assemble the full entry
-                    entry_dict = {
-                                'image': os.path.join(image_dir, subimage),
-                                'height': height,
-                                'width': width,
-                                'ann_label': bounded_df['label'].unique().tolist(),
-                                'frame_id': os.path.join(image_dir, subimage),
-                                'ann': label_dict,
-                    }
-
-                    label_list.append(entry_dict)
-
-    # save the label list
-    with open(os.path.join(image_dir, 'processed_keypoints.json'), 'w') as fid:
-        json.dump(label_list, fid)
 
 
 # create a label dict
@@ -280,9 +205,9 @@ def make_dict(bounded_df:pd.DataFrame, bound, bound_name:str):
     Bx_off = abs(np.nanmax(med_x)-np.nanmin(med_x)) * 0.3 # offsets for bounding box
     By_off = abs(np.nanmax(med_y)-np.nanmin(med_y)) * 0.3 # offsets for bounding box
     B_xmin = max([0, min(med_x) - Bx_off]) # don't go below 0
-    B_xmax = min([bound[3], max(med_x) + Bx_off]) # don't go above width of image
+    B_xmax = min([width, max(med_x) + Bx_off]) # don't go above width of image
     B_ymin = max([0, min(med_y) - By_off])
-    B_ymax = min([bound[2], max(med_y) + By_off])
+    B_ymax = min([height, max(med_y) + By_off])
     B_area = (B_xmax - B_xmin)*(B_ymax - B_ymin)
 
     # print(labels_x)
@@ -290,11 +215,11 @@ def make_dict(bounded_df:pd.DataFrame, bound, bound_name:str):
 
     label_dict = {'X': labels_x.tolist(),
                   'Y': labels_y.tolist(),
-                  'bbox': np.array([B_ymin/height, B_ymax/height, B_xmin/width, B_xmax/width]).tolist(),
+                  'bbox': np.array([B_xmin/width, B_xmax/width, B_ymin/height, B_ymax/height]).tolist(),
                   'med': np.array([med_y/height, med_x/width]).tolist(),
                   'mu': np.array([mu_y/height, mu_x/width]).tolist(),
                   'std': np.array([std_y/height, std_x/width]).tolist(),
-                  'area': [B_area]
+                  'area': B_area
                   }
     
     return label_dict, (width, height)
