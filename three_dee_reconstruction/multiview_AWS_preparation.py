@@ -133,7 +133,7 @@ def crop_and_splice(video_paths:List[str], output_dir:str, num_frames:int, sql_f
         # pull bounding boxes from the sqlite database
         bounds = bound_puller(sql_filename, video_path)
 
-        # get the widths and heighths of each view 
+        # get the widths and heights of each view 
         # debating changing all of the xyxy to xywh...
         width_subs = {key:(bounds[key][3]-bounds[key][1]) for key in bounds.keys()}
         height_subs = {key:(bounds[key][2]-bounds[key][0]) for key in bounds.keys()}
