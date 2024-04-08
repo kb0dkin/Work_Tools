@@ -34,7 +34,7 @@ def image_split_text(bound_file: str, image_dir:str):
 
 
 # split image into different views based on sql file
-def video_split_sql(sql_path: str, video_path:str, output_dir:str = None):
+def video_split_sql(sql_path: str, video_path:str, output_dir:str = None, is_calib:bool = False):
     '''
     video_split_sql
         splits a multiview video into images of different views, including
@@ -45,6 +45,7 @@ def video_split_sql(sql_path: str, video_path:str, output_dir:str = None):
         - sql_path          sqlite file containing boundaries of views
         - video             path of video
         - output_dir        output directory. if None, creates new directory in same location as video
+        - is_calib          is this a calibration video? if so, the sql query is a bit different [default = False]
     '''
 
     # check to make sure that we can access tables in the sql file
@@ -66,7 +67,7 @@ def video_split_sql(sql_path: str, video_path:str, output_dir:str = None):
 
 
     # get the boundaries from sql
-    boundaries = bound_puller(sql_path, video_path)
+    boundaries = bound_puller(sql_path, video_path, is_calib)
 
     # open a video reader and writer for splitting
     vid_read = cv2.VideoCapture(video_path)
@@ -113,9 +114,12 @@ def video_split_sql(sql_path: str, video_path:str, output_dir:str = None):
     
 
 
-def bound_puller(sql_filename, vid_filename):
+def bound_puller(sql_filename, vid_filename, is_calib:bool = False):
     '''
-    get the boundaries of the file from the most recent video
+    get the boundaries of the file from the most recent video. 
+
+    if is_calib == True, this video is a calibration video and just
+    pull its bounding boxes directly
     '''
     if not os.path.exists(sql_filename):
         return -1
@@ -125,21 +129,29 @@ def bound_puller(sql_filename, vid_filename):
 
     vid_short = os.path.split(vid_filename)[-1]
 
-    # get the date of the video
-    sql_query = "SELECT DATE(s.time), v.relative_path FROM session as s, videos as v WHERE v.relative_path LIKE ? AND s.rowid=v.session_id ;"
-    response_video = np.array(cur.execute(sql_query,('%'+vid_short,)).fetchall())
-    video_date = response_video[0,0].astype(np.datetime64) # convert to datetime for math
+    if not is_calib:
+        # get the date of the video
+        sql_query = "SELECT DATE(s.time), v.relative_path FROM session as s, videos as v WHERE v.relative_path LIKE ? AND s.rowid=v.session_id ;"
+        response_video = np.array(cur.execute(sql_query,('%'+vid_short,)).fetchall())
+        video_date = response_video[0,0].astype(np.datetime64) # convert to datetime for math
     
-    # get all of the dates of the calibration videos
-    sql_query = "SELECT DATE(c.date), c.boundary FROM calibration as c;"
-    response_calibration = np.array(cur.execute(sql_query).fetchall())
-    calib_date = response_calibration[:,0].astype(np.datetime64) # convert to datetime for math
+        # get all of the dates of the calibration videos
+        sql_query = "SELECT DATE(c.date), c.boundary FROM calibration as c;"
+        response_calibration = np.array(cur.execute(sql_query).fetchall())
+        calib_date = response_calibration[:,0].astype(np.datetime64) # convert to datetime for math
 
-    # find the associated calibration date
-    date_diffs = (video_date-calib_date).astype(np.int8) # how long has passed since the calibration?
-    calib_i = np.where(date_diffs < 0, np.inf, date_diffs).argmin() # find the most recent calibration (but not recorded after video)
+        # find the associated calibration date
+        date_diffs = (video_date-calib_date).astype(np.int8) # how long has passed since the calibration?
+        calib_i = np.where(date_diffs < 0, np.inf, date_diffs).argmin() # find the most recent calibration (but not recorded after video)
+        
+        return eval(response_calibration[calib_i,1]) # return the bounding boxes as a dictionary
+    
+    elif is_calib:
+        sql_query = "SELECT c.boundary FROM calibration as c WHERE c.relative_path LIKE ? ;"
+        response_calibration = cur.execute(sql_query, ('%'+vid_short,)).fetchall()[0][0]
 
-    return eval(response_calibration[calib_i,1]) # return the bounding boxes as a dictionary
+        return eval(response_calibration)
+
 
 
 # flip views to account for the whole "mirror" thing
