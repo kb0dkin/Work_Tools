@@ -1,7 +1,6 @@
 import argparse
 import os
 import json
-import glob
 from typing import List
 import cv2
 import numpy as np
