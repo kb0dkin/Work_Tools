@@ -45,7 +45,7 @@ def Sleap2Anipose(slp_file:str, output_path: None, csv:bool = False):
     mInd = pd.MultiIndex.from_product([['sleap'],nodes,['x','y','likelihood']], names=['scorer','bodyparts','coords'])
 
     # iterate through the instances
-    slp_df = pd.DataFrame(columns=mInd)
+    slp_df = pd.DataFrame(columns=mInd, index=range(slp_data[-1].frame_idx + 1))
     for frame in slp_data:
         # create an empty entry to append...
         entry = {}
@@ -57,8 +57,9 @@ def Sleap2Anipose(slp_file:str, output_path: None, csv:bool = False):
         elif frame.has_predicted_instances:
             temp_instance = frame.predicted_instances[0]
             inst_type = 'pred'
-        else:
+        else: # insert a blank row to keep the labels aligned with the video frames
             continue
+
 
         # loop through the available nodes
         for node in [node.name for node in temp_instance.nodes]:
@@ -68,6 +69,8 @@ def Sleap2Anipose(slp_file:str, output_path: None, csv:bool = False):
                 entry[('sleap',node,'likelihood')] = temp_instance[node]['score'] if inst_type == 'pred' else 1.0
         
         slp_df.loc[frame.frame_idx,:] = entry
+
+    
 
     
     # need to replace all of the NaNs with 0s

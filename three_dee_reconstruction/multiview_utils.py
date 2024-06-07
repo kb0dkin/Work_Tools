@@ -19,18 +19,6 @@ import sqlite3
 
 
 
-# split image into different views based on boundaries.txt
-def image_split_text(bound_file: str, image_dir:str):
-    '''
-    image_split_text
-
-    arguments:
-        - bound_file        text file from output_manifest_processing that defines boundaries
-
-    '''
-
-    pass
-
 
 
 # split image into different views based on sql file
@@ -75,13 +63,15 @@ def video_split_sql(sql_path: str, video_path:str, output_dir:str = None, is_cal
     # dict of videos writers -- one for each boundary
     vid_base = os.path.splitext(os.path.split(video_path)[-1])[0]
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    # fourcc = cv2.VideoWriter_fourcc(*'H264')
+    # fourcc = cv2.VideoWriter_fourcc(*'h264')
+    # fourcc = cv2.VideoWriter_fourcc(*'RGBA')
     vid_dict = {b_name:
                 cv2.VideoWriter(os.path.join(output_dir, vid_base + '_' + b_name + '.mp4'), 
+                # cv2.VideoWriter(os.path.join(output_dir, vid_base + '_' + b_name + '.avi'), 
                                 fourcc, 
                                 vid_read.get(cv2.CAP_PROP_FPS),
-                                (max(boundary[3]-boundary[1], boundary[2]-boundary[0]),
-                                 min(boundary[3]-boundary[1], boundary[2]-boundary[0]))) 
+                                (boundary[3]-boundary[1] if b_name.lower() in ['north','south','center'] else boundary[2]-boundary[0],
+                                 boundary[2]-boundary[0] if b_name.lower() in ['north','south','center'] else boundary[3]-boundary[1])) 
                 for b_name, boundary in boundaries.items()}
     # vid_dict = dict(zip([bound for bound in boundaries.keys()], ))
     
@@ -101,7 +91,7 @@ def video_split_sql(sql_path: str, video_path:str, output_dir:str = None, is_cal
             temp_frame = view_flipper(temp_frame, b_name)
 
             # gamma correction
-            temp_frame = ((temp_frame/255)**.6 * 255).astype(np.uint8)
+            # temp_frame = ((temp_frame/255)**.6 * 255).astype(np.uint8)
 
             # save it
             vid_dict[b_name].write(temp_frame)
@@ -133,7 +123,9 @@ def bound_puller(sql_filename, vid_filename, is_calib:bool = False):
         # get the date of the video
         sql_query = "SELECT DATE(s.time), v.relative_path FROM session as s, videos as v WHERE v.relative_path LIKE ? AND s.rowid=v.session_id ;"
         response_video = np.array(cur.execute(sql_query,('%'+vid_short,)).fetchall())
+        # print(vid_short)
         video_date = response_video[0,0].astype(np.datetime64) # convert to datetime for math
+        # video_date = response_video[0].astype(np.datetime64) # convert to datetime for math
     
         # get all of the dates of the calibration videos
         sql_query = "SELECT DATE(c.date), c.boundary FROM calibration as c;"
@@ -182,7 +174,7 @@ def check_sql(sql_path):
     conn = sqlite3.connect(sql_path)
     cur = conn.cursor()
 
-    cur.execute('PRAGMA table_list;')
+    cur.execute('SELECT name FROM sqlite_schema;')
     if len(cur.fetchall()) == 0:
         print(f'Did not find any tables in {sql_path}')
         return -1
