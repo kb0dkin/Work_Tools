@@ -1,0 +1,113 @@
+def open_sig_events(directory:str):
+    # open up a session, then pull out the signal and events
+    session = Session(directory)
+
+    recording = session.recordnodes[0].recordings[0].continuous[0]
+
+    # get out the signal
+    sig = recording.samples[:,:64]
+
+    # pull out the events -- both giving the time and the indices
+    events = np.argwhere(np.diff(recording.samples[:,64]>5000) == 1)
+    events = events.reshape([int(events.shape[0]/2),2])
+    event_ts = events/recording.metadata['sample_rate']
+
+    # timestamps
+    timestamps = recording.sample_numbers - recording.sample_numbers[0]
+    timestamps = timestamps/recording.metadata['sample_rate']
+
+    return sig, timestamps, events, event_tsdef open_sig_events(directory:str):
+    # open up a session, then pull out the signal and events
+    session = Session(directory)
+
+    recording = session.recordnodes[0].recordings[0].continuous[0]
+
+    # get out the signal
+    sig = recording.samples[:,:64]
+
+    # pull out the events -- both giving the time and the indices
+    events = np.argwhere(np.diff(recording.samples[:,64]>5000) == 1)
+    events = events.reshape([int(events.shape[0]/2),2])
+    event_ts = events/recording.metadata['sample_rate']
+
+    # timestamps
+    timestamps = recording.sample_numbers - recording.sample_numbers[0]
+    timestamps = timestamps/recording.metadata['sample_rate']
+
+    return sig, timestamps, events, event_ts
+
+
+
+
+
+def open_sig_events(directory:str):
+    # open up a session, then pull out the signal and events
+    session = Session(directory)
+
+    recording = session.recordnodes[0].recordings[0].continuous[0]
+
+    # get out the signal
+    sig = recording.samples[:,:64]
+
+    # pull out the events -- both giving the time and the indices
+    events = np.argwhere(np.diff(recording.samples[:,64]>5000) == 1)
+    events = events.reshape([int(events.shape[0]/2),2])
+    event_ts = events/recording.metadata['sample_rate']
+
+    # timestamps
+    timestamps = recording.sample_numbers - recording.sample_numbers[0]
+    timestamps = timestamps/recording.metadata['sample_rate']
+
+    return sig, timestamps, events, event_ts
+
+# lets go through recordings in groups of locations
+base_dir = 'Z:\\BrainPatch\\20240821'
+
+dir_400 = ['Crimson__2024-08-21_13-44-07__10mA_MinOil_2ms','Crimson__2024-08-21_13-46-02__20mA_MinOil_2ms','Crimson__2024-08-21_13-47-40__15mA_MinOil_2ms','Crimson__2024-08-21_13-49-43__10mA_MinOil_2ms','Crimson__2024-08-21_13-51-50__5mA_MinOil_2ms']
+dir_700 = ['Crimson__2024-08-21_13-56-49__5mA_MinOil_2ms','Crimson__2024-08-21_13-58-50__10mA_MinOil_2ms','Crimson__2024-08-21_14-00-53__15mA_MinOil_2ms','Crimson__2024-08-21_14-02-54__20mA_MinOil_2ms']
+dir_1000 = ['Crimson__2024-08-21_14-05-52__5mA_MinOil_2ms','Crimson__2024-08-21_14-07-41__10mA_MinOil_2ms','Crimson__2024-08-21_14-09-46__15mA_MinOil_2ms','Crimson__2024-08-21_14-11-45__20mA_MinOil_2ms']
+dir_1300 = ['Crimson__2024-08-21_14-14-26__5mA_MinOil_2ms','Crimson__2024-08-21_14-16-02__10mA_MinOil_2ms','Crimson__2024-08-21_14-17-58__15mA_MinOil_2ms','Crimson__2024-08-21_14-20-21__20mA_MinOil_2ms']
+dir_1600 = ['Crimson__2024-08-21_14-23-13__5mA_MinOil_2ms','Crimson__2024-08-21_14-25-16__10mA_MinOil_2ms','Crimson__2024-08-21_14-27-12__15mA_MinOil_2ms','Crimson__2024-08-21_14-29-03__20mA_MinOil_2ms']
+
+# dictionary of direct groups
+dir_dict = {400: dir_400, 700:dir_700, 1000:dir_1000, 1300:dir_1300, 1600:dir_1600}
+
+
+
+resp_df = pd.DataFrame(columns=['Channel_no','Current','Distance','uMin','uMin_ts','medMin','medMin_ts'])
+
+for dist,dir_list in dir_dict.items():
+    for sub_dir in dir_list:
+        directory = os.path.join(base_dir, sub_dir)
+
+        # open the directory
+        sig, timestamps, events, event_ts = open_sig_events(directory)
+
+        # pull out the stim responses
+        mins, rel_mins, abs_mins = find_responses(sig, events)
+
+        # means and medians for each channel
+        uMins = np.mean(mins, axis=0)
+        uMins_ts = np.mean(rel_mins, axis=0)
+        medMins = np.median(mins, axis=0)
+        medMins_ts = np.median(rel_mins, axis=0)
+
+        # a nested dictionary of all of the channels responses
+        tdict = {ii:{'Channel_no':ii, 
+                'Current':re.search('([0-9]+)mA', sub_dir)[1],
+                'Distance': dist,
+                'uMin':uMins[ii],
+                'uMin_ts':uMins_ts[ii],
+                'medMin':medMins[ii],
+                'medMin_ts':medMins_ts[ii],
+                } for ii in range(64)}
+
+        t_df = pd.DataFrame.from_dict(tdict, orient='index') # create a dataframe
+
+        resp_df = pd.concat([resp_df, t_df], ignore_index=True)
+
+
+
+# Look through a few channels for 20 mA at different distance
+# dist_cmp = resp_df.loc[resp_df.Current=='20']
+aresp_df.groupby(['Channel_no','Distance']).plot()
