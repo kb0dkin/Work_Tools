@@ -65,14 +65,14 @@ def open_sig_events(directory:str, verbose:bool = False):
             print('\n')
 
     # load the continuous data from the first recordnode/recording
-    recording = session.recordnodes[0].recordings[0].continuous
+    recording = session.recordnodes[0].recordings[1].continuous[0]
     sig = recording.samples[:,:64] * recording.metadata['bit_volts'][0]
 
     # pull out stimulation events -- channel 64
     events = np.argwhere(np.diff(recording.samples[:,64]>5000) == 1) # find beginning and end of high values
     events_ts = recording.sample_numbers[events] / recording.metadata['sample_rate'] # recording doesn't start at t=0
     events = events.reshape([int(events.shape[0]/2),2]) # reshape to Ex2 (E == #events)
-    events_ts = events_ts.reshape([int(events.shape[0]/2),2]) # reshape to Ex2 (E == #events)
+    events_ts = events_ts.reshape([int(events.shape[0]),2]) # reshape to Ex2 (E == #events)
 
 
     # timestamps -- 

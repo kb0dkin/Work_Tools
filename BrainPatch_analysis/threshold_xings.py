@@ -34,8 +34,9 @@ def threshold_extract(sig, fs:float = 30000, b_high:float = 300, b_low:float = 6
         channels : int|list - channels to record from; -1 == all [-1]
        
     outputs:
-        spike_ts : np.array - Sx2 (S = spike count) timestamp and channel number for spike
-        spike_wf : np.array - 1.5 ms waveform for each spike (300 us before, 1200 after)
+        spike_dict: dict    - dictionary of N numpy arrays (N==# channels)
+                                Each array contains one timestamp column and the T columns of the waveform 
+                                T == (1.5 ms window * fs)
 
     '''
 
@@ -49,24 +50,24 @@ def threshold_extract(sig, fs:float = 30000, b_high:float = 300, b_low:float = 6
 
     # thresholding
     thresholds = np.std(sig_filt, axis=0) * thresh # find the threshold value for each channel
-    xings = np.where(np.diff(int(sig_filt < thresholds)) > 1)
+    xings = np.where(np.diff((sig_filt < thresholds).astype(int)) > 1)
 
     # remove unlikely units 
     #   too many simultaneous channels in less than a specific amount of time
     simul_starts = np.where(np.diff(xings[:,0], n=simul_max, axis=0) < (fs/1000))
     simul_mask = np.ones(xings.shape[0],1) # initialize a mask
     for ind in simul_starts: # remove all of the periods with too many multi-channel units
-        simul_mask[simul_starts:simul_starts+simul_max] = 0
+        simul_mask[ind:ind+simul_max] = 0
     xings = xings[simul_mask,:] # remove everything that happens too quickly
 
-    # too short ISI on a single channel.
-    valid_spikes = np.ndarray((0,2))
-    waveforms = np.ndarray((0,int(1.5 * (fs/1000))))
-    for chan in np.unique(xings[:,1]): # for each channel
-        chan_spikes = xings[xings[:,1] == chan, :]
-        chan_spikes = chan_spikes[[0, np.diff(chan_spikes) > isi_min * (fs/1000)+1],:]
-        valid_spikes = valid_spikes.append(chan_spikes, axis=0)
-        for spike in valid_spikes.iterrows():
+    # split by channel, short ISI removal?
+    spike_dict = {}
+    for i_channel in enumerate(channels): # just in case we're using a subset, I want the proper info
+        spike_ts = xings[xings[:,1] == i_channel]
+        spike_wf = 
+        for spike in spike_ts:
+
+        
             
 
     
