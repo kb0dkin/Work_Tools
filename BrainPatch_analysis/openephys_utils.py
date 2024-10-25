@@ -172,6 +172,37 @@ def save_filt_signal(directory:str, hpf:int = 300, lpf:int = 6000, fs:int = 3000
 
 
 # ---------------------------------- #
+def ERAASR(sig:np.array, chan_map:dict | None = None, num_surround:int = 0, fs:int = 30000):
+    '''
+    ERAASR
+        implementing the PCA-based artifact rejection technique from O'Shea and Shenoy 2019
+        
+        Pre-filter data to get rid of obvious junk
+        1. HPF at 10 hz (respiratory noise etc)
+
+        Next, the across-channel removal
+        2. PCA to get the matrix weighting
+        3. Remove top 4 (adjusted PCs) from each channel c
+            a. subtract Reconstructed PCs from array I guess. Seems a little indirect
+
+
+    inputs:
+        sig:np.array        - TxN array of the raw signal
+        chan_map:dict       - channel map if accounting for surrounding channels in Wc [None]
+        num_surround:int    - number of electrodes away from channel to remove from Wc [0]
+    '''
+
+    sos_filt = signal.butter(N = 2, Wn = [10], fs = fs, btype='high', output='sos') # create filter
+    filt_sig = signal.sosfiltfilt(sos_filt, filt_sig, axis=0) # filter it
+
+    pca = PCA()
+    pca.fit(filt_sig)
+
+
+
+
+
+# ---------------------------------- #
 def plot_raw_filt():
     '''
     plot the raw and filtered data on a single plot
