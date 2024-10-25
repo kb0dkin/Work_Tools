@@ -8,6 +8,7 @@ from open_ephys.analysis import Session
 import numpy as np
 from scipy import signal
 from os import path
+from sklearn.decomposition import PCA
 
 
 
@@ -72,7 +73,7 @@ def open_sig_events(directory:str, verbose:bool = False):
     stim = np.argwhere(np.diff(recording.samples[:,64]>5000) == 1) # find beginning and end of high values
     stim_ts = recording.sample_numbers[stim] / recording.metadata['sample_rate'] # recording doesn't start at t=0
     stim = stim.reshape([int(stim.shape[0]/2),2]) # reshape to Ex2 (E == #stim)
-    stim_ts = stim_ts.reshape([int(stim.shape[0]/2),2]) # reshape to Ex2 (E == #stim)
+    stim_ts = stim_ts.reshape([int(stim_ts.shape[0]/2),2]) # reshape to Ex2 (E == #stim)
 
 
     # timestamps -- 
@@ -159,7 +160,7 @@ def save_filt_signal(directory:str, hpf:int = 300, lpf:int = 6000, fs:int = 3000
     else:
         np.load(path.join(directory, 'raw_sig.npy'))
 
-    filt_sos = signal.butter(n=ntap, Wn=[hpf, lpf], btype='bandpass', fs=fs) # build a filter
+    filt_sos = signal.butter(N=ntap, Wn=[hpf, lpf], btype='bandpass', fs=fs, output='sos') # build a filter
     filt_sig = signal.sosfiltfilt(filt_sos, sig, axis = 0) # run it through a bidirectional filter
 
     # save it all
