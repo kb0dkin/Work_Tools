@@ -195,8 +195,18 @@ def ERAASR(sig:np.array, chan_map:dict | None = None, num_surround:int = 0, fs:i
     sos_filt = signal.butter(N = 2, Wn = [10], fs = fs, btype='high', output='sos') # create filter
     filt_sig = signal.sosfiltfilt(sos_filt, filt_sig, axis=0) # filter it
 
-    pca = PCA()
+    # fit the principal components -- only looking for the first 4 (per 2018 paper)
+    pca = PCA(n_components=4)
     pca.fit(filt_sig)
+
+    # loop through each channel
+    sig_out = filt_sig.copy() # make a copy for subtraction
+    Wc = np.matmul(filt_sig, pca.components_) # Tx4 
+    for ii in np.range(sig.shape[0]):
+        components = pca.components_.copy()[:,:4] # create a copy
+        components[ii,:] = 0
+        Ac = np.matmul(sos_cpy, components)
+
 
 
 
