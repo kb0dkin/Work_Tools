@@ -200,11 +200,10 @@ def ERAASR(sig:np.array, chan_map:dict | None = None, num_surround:int = 0, fs:i
     pca.fit(filt_sig)
 
     # loop through each channel
-    sig_out = filt_sig.copy() # make a copy for subtraction
+    sig_cpy = filt_sig.copy() # make a copy for subtraction
     Wc = np.matmul(filt_sig, pca.components_) # Tx4 
     for ii in np.range(sig.shape[0]):
-        components = pca.components_.copy()[:,:4] # create a copy
-        components[ii,:] = 0
+        sig_cpy = 
         Ac = np.matmul(sos_cpy, components)
 
 
