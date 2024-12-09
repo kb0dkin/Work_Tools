@@ -96,7 +96,8 @@ def open_sig_stims(directory:str, verbose:bool = False, reconvert:bool = False, 
 
     # pull out stimulation stim -- channel 64
     stim_stream = recording.samples[:,64] - recording.samples[:,64].mean()
-    stim = np.argwhere(np.diff(stim_stream>100) == 1) # find beginning and end of high values
+    cutoff = stim_stream.max() * .9
+    stim = np.argwhere(np.diff(stim_stream>cutoff) == 1) # find beginning and end of high values
     stim = stim[:-1] if stim.shape[0]%2 else stim # if we have a stimulus overlapping with the end, get rid of it
     stim_ts = recording.sample_numbers[stim] / recording.metadata['sample_rate'] # recording doesn't start at t=0
     stim = stim.reshape([int(stim.shape[0]/2),2]) # reshape to Ex2 (E == #stim)
@@ -181,22 +182,30 @@ def save_raw_signal(directory:str, force:bool = False):
 
 
 # ---------------------------------- #
-def ERAASR(sig:np.array, chan_map:dict = None, num_surround:int = 0, fs:int = 30000, mode:str = 'ERAASR'):
+def ERAASR(sig:np.array, stims:np.array = None, chan_map:dict = None, num_surround:int = 0, fs:int = 30000, mode:str = 'ERAASR'):
     '''
     ERAASR
-        implementing the PCA-based artifact rejection technique from O'Shea and Shenoy 2019
+        implementing a modified version of the
+        PCA-based artifact rejection technique from O'Shea and Shenoy 2019
         
         Pre-filter data to get rid of obvious junk
         1. HPF at 10 hz (respiratory noise etc)
 
-        Next, the across-channel removal
+        across-channel removal
         2. PCA to get the matrix weighting
         3. Remove top 4 (adjusted PCs) from each channel c
-            a. subtract Reconstructed PCs from array I guess. Seems a little indirect
+            a. subtract Reconstructed PCs from array
+        
+        across-stimulation removal (if stimulation time is available)
+        4. per-channel, PCA across stimulations
+        5. reproject, subtract least-squares fit.  
+
+
 
 
     inputs:
         sig:np.array        - TxC array of the raw signal
+        stims:np.array      - Tx2 array of stimulation start and stop times [None]
         chan_map:dict       - channel map if accounting for surrounding channels in Wc [None]
         num_surround:int    - number of electrodes away from channel to remove from Wc [0]
 
@@ -211,7 +220,7 @@ def ERAASR(sig:np.array, chan_map:dict = None, num_surround:int = 0, fs:int = 30
     pca = PCA(n_components=4)
     pca.fit(filt_sig)
 
-    # loop through each channel
+    # across-channel artifacts
     sig_clean = np.empty_like(filt_sig) # make a copy for subtraction
     for channel in np.arange(sig.shape[1]):
         Wnc = pca.components_.copy() # make a copy for the exclusionary projection matrix
@@ -225,12 +234,24 @@ def ERAASR(sig:np.array, chan_map:dict = None, num_surround:int = 0, fs:int = 30
         else:
             sig_clean[:,channel] = filt_sig[:,channel] - np.matmul(np.matmul(filt_sig, Wnc.T), Wcc)
 
+
+    # pull out across-stim artifacts
+    if stims is not None:
+        resp_len = np.diff(stims[:,0]).min()
+        resp_ind = np.concatenate([stims[:,0], stims[:,0]+resp_len])
+        resp_sig = sig_clean[resp_ind,:].reshape((stims.shape[0], resp_len, sig_clean.shape[1])).transpose((1,0,2))
+        
+
+        
+
+
+
     return sig_clean
 
 
 # ---------------------------------- #
 def threshold_crossings(sig:np.array, fs:int = 30000, high_pass:int = 300, low_pass:int = 6000,
-                        thresh_mult:float = -3, multi_rejection:int = 10, low_cutoff:int = -20):
+                        thresh_mult:float = -3, multi_rejection:int = None, low_cutoff:int = -20):
     '''
     find threshold crossings based on a multiplier. First run a bandpass filter, 
     then do some basic artifact rejection.
@@ -248,7 +269,7 @@ def threshold_crossings(sig:np.array, fs:int = 30000, high_pass:int = 300, low_p
         multi_rejection : bool  - should we remove spikes that are on more than 10 channels in less than 1 ms?
     
     outputs:
-        spikes : dict           - dataframe with spike times, channel #, and waveform
+        spikes : dict           - dict with spike times, channel #, and waveform
 
     '''
 
@@ -289,7 +310,7 @@ def threshold_crossings(sig:np.array, fs:int = 30000, high_pass:int = 300, low_p
 
 
 # ---------------------------------- #
-def calc_FR(spike_dict:dict, max_samp:int = None, min_samp:int = None, fs:int = 30000, bin_width:float = .01, count:bool = False):
+def calc_FR(spike_dict:dict, max_samp:int = None, min_samp:int = None, fs:int = 30000, bin_sec:float = .01, bin_ms:float = None, count:bool = False):
     '''
     calculates the firing rates or spike counts (count == TRUE) for each channel. Not currently
     set to do any smoothing. May do that later
@@ -299,12 +320,17 @@ def calc_FR(spike_dict:dict, max_samp:int = None, min_samp:int = None, fs:int = 
         max_samp: int               - sample number for the max value of the binning array. Will look through the dictionary for max values if not provided [None]
         min_samp: int               - sample number for min value of the binning array.  [None]
         fs: int                     - sample frequency in hz [30000]
-        bin_width : float           - bin width in seconds [.01]
+        bin_sec : float             - bin width in seconds [.01]
+        bin_ms : float              - bin width in ms [None]
         count : bool                - return spike counts (instead of firing rates) [False]
 
     outputs:
         firing_rates/spike_counts   - either the firing rates or counts per bin, depending on the count flag
+        bins                        - the beginning of each bin, in sample numbers (can convert to timestamps by dividing by fs)
     '''
+    # overwrite bin_sec with bin_ms if given
+    if bin_ms is not None:
+        bin_sec = bin_ms / 1000
 
     # calculate length of binning array
     if (max_samp is None) or (min_samp is None):
@@ -314,7 +340,7 @@ def calc_FR(spike_dict:dict, max_samp:int = None, min_samp:int = None, fs:int = 
             max_samp = int(max(max_samp, data['sample_no'].max()))
             min_samp = int(min(min_samp, data['sample_no'].min()))
 
-    bin_width = int(bin_width * fs) # bin width
+    bin_width = int(bin_sec * fs) # bin width converted to samples
     bins = np.arange(start = min_samp, step = bin_width, stop = max_samp + bin_width) # create an array of bins
     firing_rates = np.empty((len(bins)-1, len(spike_dict.keys()))) # pre-allocate array
     for channel, data in spike_dict.items():
@@ -323,7 +349,7 @@ def calc_FR(spike_dict:dict, max_samp:int = None, min_samp:int = None, fs:int = 
     if count: # currently we've actually got counts-per-bin, not firing rates
         return firing_rates, bins[:-1]
     else:
-        return firing_rates / bin_width, bins[:-1] # divide by the bin width to give the firing rate
+        return firing_rates / bin_sec, bins[:-1] # divide by the bin width to give the firing rate
 
 
 
@@ -340,12 +366,15 @@ def LFP_responses(sig, stims, len_ms:int = 25, n_chans:int = 64, sample_rate:int
     min_samp = np.zeros((n_stims, n_chans))
 
     for i_stim, stim in enumerate(stims):
-        response = sig[stim[0]:stim[0]+samp_len,:]
-        means = np.mean(sig[stim[0]+4:stim[1]-4,:], axis = 0)
-        responses[i_stim,:,:] = response - means # response for each channel
+        if stim[0]+4 >= stim[1]-4 or stim[1] > sig.shape[0]: # skip any where we might get an empty selection
+            responses[i_stim,:] = 0
+        else:
+            response = sig[stim[0]:stim[0]+samp_len,:]
+            means = np.mean(sig[stim[0]+4:stim[1]-4,:], axis = 0)
+            responses[i_stim,:,:] = response - means # response for each channel
     
-        mins[i_stim,:] = np.min(response - means, axis=0)
-        min_samp[i_stim,:] = np.argmin(response - means, axis=0)
+            mins[i_stim,:] = np.min(response - means, axis=0)
+            min_samp[i_stim,:] = np.argmin(response - means, axis=0)
 
     return mins, min_samp
 
@@ -373,6 +402,7 @@ def LFP_stim_bulk(base_dir:str, n_chans:int = 64, save_fn:str = 'LFP_resp.pkl', 
 
     # set up a figure for mean responses for a couple of channels for each distance
     ax_map = dict(zip(distances, range(len(distances)))) # mapping the distance onto axis number
+    patch_flag = {dist:0 for dist in distances} # only show one stimulation patch per mean
     rng = np.random.default_rng() # getting a random subset of the channels for plotting the average
     chan_examp = rng.choice(n_chans, 4)
     fig_means,ax_means = {},{}
@@ -382,7 +412,7 @@ def LFP_stim_bulk(base_dir:str, n_chans:int = 64, save_fn:str = 'LFP_resp.pkl', 
     print(f'Found {len(directories)} recordings in {base_dir}')
     print(f'{len(currents)} unique current values and {len(distances)} unique distances')
 
-    resp_df = pd.DataFrame(columns=['Channel_no','Current','Distance','uMin','uMin_ts'])
+    resp_list = []
     for sub_dir in tqdm(directories):
         
         # get the current and distance value from the directory name
@@ -400,7 +430,9 @@ def LFP_stim_bulk(base_dir:str, n_chans:int = 64, save_fn:str = 'LFP_resp.pkl', 
         # plot the mean response on the appropriate axis
         i_dist = ax_map[distance]
         for ch in chan_examp:
-            plot_avg_LFP(sig, stims, channel=ch, ax=ax_means[ch][i_dist], label=f'{current} mA')
+            plot_mean_LFP(sig, stims, channel=ch, ax=ax_means[ch][i_dist], label=f'{current} mA', show_stim = patch_flag[distance] == 0)
+
+        patch_flag[distance] = 1 # make it so the stimulation patch only shows up once
 
         # pull out the stim responses
         mins, min_samp = LFP_responses(sig, stims)
@@ -409,17 +441,19 @@ def LFP_stim_bulk(base_dir:str, n_chans:int = 64, save_fn:str = 'LFP_resp.pkl', 
         uMins = np.mean(mins, axis=0)
         uMins_ts = np.mean(min_samp, axis=0)/30000
 
-        # a nested dictionary of all of the channels responses
-        tdict = {ii:{'Channel_no':ii, 
+        tlist = [{'Channel_no':ii, 
                 'Current':current,
                 'Distance': distance,
                 'uMin':uMins[ii],
                 'uMin_ts':uMins_ts[ii],
-                } for ii in range(n_chans)}
+                } for ii in range(n_chans)]
 
-        t_df = pd.DataFrame.from_dict(tdict, orient='index') # create a dataframe
+        resp_list.extend(tlist)
 
-        resp_df = pd.concat([resp_df, t_df], ignore_index=True)
+
+    # turn the list into a dataframe -- much faster than concat
+    resp_df = pd.DataFrame(resp_list) 
+
 
     # save it
     if save_fn is not None:
@@ -427,17 +461,26 @@ def LFP_stim_bulk(base_dir:str, n_chans:int = 64, save_fn:str = 'LFP_resp.pkl', 
             pickle.dump(resp_df, fid)
 
     # plot everything
-    fig_min = plt.figure()
-    plot_LFP_mins(resp_df, fig_min)
-    fig_time = plt.figure()
-    plot_LFP_min_times(resp_df, fig_time)
+    fig_min = plot_LFP_mins(resp_df)
+    fig_min.set_size_inches((12,6))
+    fig_time = plot_LFP_min_times(resp_df)
+    fig_time.set_size_inches((12,6))
 
     # clean up the average plots
     for fig_key, fig_value in  fig_means.items():
-        fig_value.suptitle(f'Channel {ch} average responses, per distance and current')
-        for ax_key, ax_value in ax_means[fig_key].keys():
-            ax_value.legend()
-            ax_value.set_title(f'Stimulation at {distances[ax_key]} mm')
+        fig_value.suptitle(f'{fig_key} average responses, per distance and current')
+        fig_value.set_size_inches((12,6))
+        for ax_mean_i, ax_mean in enumerate(ax_means[fig_key]): # arange each axis properly
+            # sort the legend order
+            handles, labels = ax_mean.get_legend_handles_labels()
+            order = np.argsort([float(re.search('(\d+\.\d+) mA', label)[1]) for label in labels])
+            ax_mean.legend([handles[o] for o in order], [labels[o] for o in order])
+            # set titles, labels etc
+            ax_mean.set_title(f'{distances[ax_mean_i]} mm')
+            ax_mean.set_xlabel('Time (ms)')
+            ax_mean.set_xlim([-2, 27])
+            if ax_mean_i == 0:
+                ax_mean.set_ylabel('Voltage (uV)')
     
     # should we save it?
     if save_plot is not None:
@@ -449,8 +492,67 @@ def LFP_stim_bulk(base_dir:str, n_chans:int = 64, save_fn:str = 'LFP_resp.pkl', 
 
 
 
-def plot_avg_LFP(sig, stims, len_ms:int = 25, channel = 0, ax:plt.axes=None, label:str=None):
-    # Plot the average response for a particular channel
+# ---------------------------------- #
+def mean_stim_FR(firing_rate:np.array, stims:np.array, bin_sec:float = .001, bin_ms:float = None, normalize:bool = True, resp_length_samp:int = 12000, fs:int=30000):
+    '''
+    the average firing rate for a recording (per channel) for each recording setup
+    
+    inputs:
+        firing_rate : np.array              - array of the firing rates
+        stims : np.array                    - stimulation start and stop times (Nx2) 
+        normalize : bool                    - Should we normalize so the average (pre-stim) firing rate is 1?
+        fs : int                            - sample rate (Hz) [30000]
+        bin_sec : float                     - bin window length (s) [.001]
+        bin_ms : float                      - bin window length, overrules bin_sec if given (ms) [None] 
+        resp_length_samp : int              - length of interest for response (samples) [15000]
+
+        
+    outputs:
+        mean_fr:np.array            - 
+        std_fr:np.array
+    
+    '''
+    # overwrite bin_sec if we are given bin_ms
+    if bin_ms is not None:
+        bin_sec = bin_ms/1000
+
+    # convert bin_win (seconds) into a sample value
+    bin_samp = int(fs*bin_sec)
+
+    # normalize off the average firing rates before the first stim:
+    if normalize:
+        pre_stim = firing_rate[:stims[0,0], :] # pull out the firing rates before the first stimulation
+        firing_rate = np.matmul(firing_rate, np.linalg.pinv(pre_stim.mean(axis=0)*np.eye(firing_rate.shape[1]))) 
+
+    # pull out the stimulation segments, then reshape
+    rebase_stims = (stims/bin_samp).astype(int) # get the bin numbers, instead of sample numbers
+    resp_length_bin = int(resp_length_samp/bin_samp) # get length of response in bins instead of samples
+    stim_resp = firing_rate[np.concatenate([np.arange(start=row, stop=row+resp_length_bin).astype(int) for row in rebase_stims[:,0]]), :] 
+    stim_resp = stim_resp.reshape((stims.shape[0],resp_length_bin,64)).transpose((1,0,2))
+
+    
+    # then pull out the mean for each channel and the std
+    mean_fr = stim_resp.mean(axis=1) # mean across trials
+    std_fr = stim_resp.std(axis=1) # standard deviation across trials
+
+    return mean_fr, std_fr
+
+
+# ---------------------------------- #
+def plot_mean_LFP(sig, stims, len_ms:int = 25, channel = 0, ax:plt.axes=None, label:str=None, show_stim:bool = True):
+    '''
+    plot the average LFP value for a channel
+    
+    inputs : [default]
+        sig : np.array          - filtered etc signal (samples x channels)
+        stims : np.array        - stimulation start/stop sample numbers (stims x 2)
+        len_ms : int            - window of interest (ms) [25]
+        channel : int           - channel of interest [0]
+        ax : plt.axes           - axis for plot [None]
+        label : str             - label name for the LFP [None]
+        show_stim : bool        - whether to show the stimulation or not [True]
+        
+    '''
     
     if ax is None:
         fig,ax = plt.subplots()
@@ -467,9 +569,12 @@ def plot_avg_LFP(sig, stims, len_ms:int = 25, channel = 0, ax:plt.axes=None, lab
     
     # go through each stim
     for i_stim, stim in enumerate(stims):
-        response = sig[stim[0]:stim[0]+len_ms*30,channel] # pop out the stimulation response
-        art_means = np.nanmean(sig[stim[0]+4:stim[1]-4]) # center the during-stimulation to 0
-        responses[i_stim,:] = response - art_means
+        if stim[0]+4 >= stim[1] or stim[1] > sig.shape[0]: # skip any where we might get an empty selection
+            responses[i_stim,:] = np.nan
+        else:
+            response = sig[stim[0]:stim[0]+len_ms*30,channel] # pop out the stimulation response
+            art_means = np.nanmean(sig[stim[0]+4:stim[1]-4]) # center the during-stimulation to 0
+            responses[i_stim,:] = response - art_means
     
     # put together the means, STDs, and timestamps
     ts = np.arange(t_len)/30
@@ -484,20 +589,27 @@ def plot_avg_LFP(sig, stims, len_ms:int = 25, channel = 0, ax:plt.axes=None, lab
     ax.add_patch(std_patch)
 
     # stimulation time
-    stim_len = np.nanmean(np.diff(stims, axis=1))/30
-    top,bottom = np.nanmax(responses), np.nanmin(responses)
-    top,bottom = top + .2*abs(top), bottom - .2*abs(bottom)
-    stim_patch = Polygon(np.array([[0, bottom],[stim_len, bottom], [stim_len, top], [0, top]]), alpha=0.2, color='k')
-    ax.add_patch(stim_patch)
+    if show_stim:
+        stim_len, stim_count = np.unique(np.diff(stims, axis=1)/30, return_counts=True)
+        stim_len = stim_len[np.argmax(stim_count)]
+        top,bottom = np.nanmax(responses), np.nanmin(responses)
+        top,bottom = top + .2*abs(top), bottom - .2*abs(bottom)
+        stim_patch = Polygon(np.array([[0, bottom],[stim_len, bottom], [stim_len, top], [0, top]]), alpha=0.2, color='k')
+        ax.add_patch(stim_patch)
 
 
 
 
 # ---------------------------------- #
-def plot_LFP_mins(resp_df:pd.DataFrame, fig:plt.figure = None):
+def plot_LFP_mins(resp_df:pd.DataFrame):
     '''
     plot the time for the minimum deviation as a function of the distance, per current value
 
+    inputs: [default]
+        resp_df: pd.DataFrame           - 
+
+    outputs: 
+        figure
     '''
 
     currents = resp_df.Current.unique()
@@ -505,8 +617,7 @@ def plot_LFP_mins(resp_df:pd.DataFrame, fig:plt.figure = None):
     currents.sort()
     distances.sort()
     
-    if fig:
-        fig,ax = plt.subplots(ncols=len(currents), sharex=True, sharey=True)
+    fig,ax = plt.subplots(ncols=len(currents), sharex=True, sharey=True)
 
     for i_curr,curr in enumerate(currents):
         dist_cmp = resp_df.loc[resp_df.Current==curr ]
@@ -515,8 +626,8 @@ def plot_LFP_mins(resp_df:pd.DataFrame, fig:plt.figure = None):
         ax[i_curr].plot(current_means.index, current_means.uMin, color='k')
 
         # ax[i_curr].legend([f'{current} mA' for current in currents], loc=4)
-        ax[i_curr].set_title(f'LED current: {curr} mA')
-        ax[i_curr].set_xlabel('Distance (um)')
+        ax[i_curr].set_title(f'{curr} mA')
+        ax[i_curr].set_xlabel('Distance (mm)')
 
 
         # remove the outer boxes
@@ -527,21 +638,26 @@ def plot_LFP_mins(resp_df:pd.DataFrame, fig:plt.figure = None):
 
     ax[0].set_ylabel('Magnitude (uV)')
     fig.suptitle('Mean response minimum as a function of distance (per current level)')
+    return fig
 
 
 # ---------------------------------- #
-def plot_LFP_min_times(resp_df:pd.DataFrame, ax:np.array = None):
+def plot_LFP_min_times(resp_df:pd.DataFrame):
     '''
     plot the time for the minimum deviation as a function of current, per distance
 
+    inputs: [default]
+        resp_df: pd.DataFrame           - 
+
+    outputs: 
+        figure
     '''
     currents = resp_df.Current.unique()
     distances = resp_df.Distance.unique()
     currents.sort()
     distances.sort()
 
-    if ax is None or ax.shape[1] != 4:
-        fig,ax = plt.subplots(ncols=4)
+    fig,ax = plt.subplots(ncols=len(distances), sharex=True, sharey=True)
 
     for i_dist,dist in enumerate(distances):
         curr_cmp = resp_df.loc[resp_df.Distance == dist]
@@ -549,7 +665,7 @@ def plot_LFP_min_times(resp_df:pd.DataFrame, ax:np.array = None):
         curr_means = curr_cmp.groupby('Current').mean('uMin_ts')
         ax[i_dist].plot(curr_means.index, curr_means.uMin_ts, color='k')
 
-        ax[i_dist].set_title(f'Distance: {dist}um')
+        ax[i_dist].set_title(f'{dist} mm')
         ax[i_dist].set_xlabel('Current (mA)')
 
 
@@ -561,6 +677,7 @@ def plot_LFP_min_times(resp_df:pd.DataFrame, ax:np.array = None):
     ax[0].set_ylabel('Time (ms)')
     fig.suptitle('Mean response minimum as a function of current (per distance)')
 
+    return fig
 
 
 
@@ -587,10 +704,6 @@ def plot_peristim_FR(FR:np.array, bins:np.array, stims:np.array, channels:np.arr
     for channel in channels:
         FR_mean = FR[:,channel].mean(axis=0)
         FR_std = FR[:,channel].std(axis=0)
-
-    # get some timestamps
-
-
 
 
 
@@ -650,17 +763,20 @@ def plot_spike_binary(spike_dict:dict, ax = None, stims:np.array = None):
 
 
 # ---------------------------------- #
-def plot_mean_waveforms(spike_dict:dict, channel:int=0, fs:int=30000, ax=None):
+def plot_mean_waveforms(spike_dict:dict, channel:int=0, fs:int=30000, ax:plt.axes = None, label:str = None, plot_std:bool = None):
     '''
     plot the mean threshold crossing for a channel, and a patch around the standard deviation.
 
     could theoretically look at splitting into different units
 
     inputs:
-        spike_dict
-        channels
-        std_flag
-        map
+        spike_dict : dict           - spike dictionary
+        channel : int               - channel number
+        fs : int                    - sample rate (Hz) [30000]
+        ax : plt.axes               - pyplot axes to plot on [None]
+        label : str                 - label for the line [None]
+        plot_std : bool             - should we plot the standard deviation [True]
+
     '''
     # create an axis if it doesn't exist
     if ax is None:
@@ -668,20 +784,56 @@ def plot_mean_waveforms(spike_dict:dict, channel:int=0, fs:int=30000, ax=None):
 
     # go into the waveforms
     mean_wf = spike_dict[channel]['waveform'].mean(axis=0)
-    std_= spike_dict[channel]['waveform'].std(axis=0)
-
-    # create std patch
-    std_array = np.ndarray((2*mean_wf.shape[0],2))
-    std_array[:mean_wf.shape[0],:] = np.array(zip(mean_wf+std_, range(mean_wf.shape[0])))
-    std_array[mean_wf.shape[0]::-1,:] = np.array(zip(mean_wf-std_, range(mean_wf.shape[0])))
-    std_array[:,0] = std_array[:,0]/(fs/1000)
-    std_patch = Polygon(std_array, alpha=0.2, color = 'o')
 
     # plot em
-    ax.plot(mean_wf) 
-    ax.add_patch(std_patch)
-    ax.set_xlabel('time (ms)')
-    ax.set_ylabel('magnitude (uV)')
+    ts = np.arange(len(mean_wf))/(fs/1000)
+    line = ax.plot(ts, mean_wf, label=label) 
+    ax.set_xlabel('Time (ms)')
+    ax.set_ylabel('Magnitude (uV)')
+
+    # create std patch
+    if plot_std:
+        std_= spike_dict[channel]['waveform'].std(axis=0) # calculate the std
+        # create the standard deviation patch
+        std_array = np.ndarray((2*mean_wf.shape[0],2))
+        std_array[:mean_wf.shape[0],:] = np.array(zip(mean_wf+std_, ts))
+        std_array[mean_wf.shape[0]::-1,:] = np.array(zip(mean_wf-std_, ts))
+        std_array[:,0] = std_array[:,0]/(fs/1000)
+        std_patch = Polygon(std_array, alpha=0.2, color = line[0].get_color())
+        ax.add_patch(std_patch)
+
+# ---------------------------------- #
+def plot_mean_FR(mean_FR:np.array, std_FR:np.array = None, channel:int = None, bin_ms:float = 1, ax:plt.axes = None, label:str = None):
+    '''
+    Plot the mean firing rates for a specific channel. 
+
+    inputs:
+        mean_FR : np.array          - mean firing rates
+        std_FR : np.array           - standard deviation [None]
+        channel : int               - channel to plot
+        bin_ms  : float             - length of the bin (ms) [1]
+        ax : matplotlib axes        - if we want to plot on an existing axis [None]
+        label : str                 - label [None]
+
+    outputs:
+    '''
+    if ax is None:
+        fig, ax = plt.subplots()
+
+    # create an array of timestamps
+    ts = np.arange(mean_FR.shape[0])/bin_ms
+    
+    FR_line = ax.plot(ts, mean_FR[:,channel], label=label)
+    # plot the standard deviations if desired
+    if std_FR is not None:
+        ts_std = np.concatenate([ts, ts[::-1]])
+        std_patch = np.concatenate([mean_FR[:,channel] + std_FR[:,channel], mean_FR[::-1,channel] - std_FR[::-1,channel]])
+        std_patch = Polygon(np.array(list(zip(ts_std,std_patch))), color=FR_line[0].get_color(), alpha=0.2)
+        ax.add_patch(std_patch)
+
+    ax.set_xlabel('Elapsed Time (ms)')
+    ax.set_ylabel('Firing Rate (Hz)')
+
 
 
 
