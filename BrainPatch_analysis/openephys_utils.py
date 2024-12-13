@@ -115,10 +115,10 @@ def open_sig_stims(directory:str, verbose:bool = False, reconvert:bool = False, 
 
     if save:
         print(f'saving data to {directory}')
-        np.save(path.join(directory, 'raw_signal.npy'))
-        np.save(path.join(directory, 'stim_sample_nums.npy'))
-        np.save(path.join(directory, 'stim_timestamps.npy'))
-        np.save(path.join(directory, 'offset_timestamps.npy'))
+        np.save(path.join(directory, 'raw_signal.npy'), sig)
+        np.save(path.join(directory, 'stim_sample_nums.npy'), stim)
+        np.save(path.join(directory, 'stim_timestamps.npy'), stim_ts)
+        np.save(path.join(directory, 'offset_timestamps.npy'), timestamps)
         # with open(path.join(directory,save_name),'wb') as fid:
         #     data = {'sig':sig, 'timestamps':timestamps, 'stim':stim, 'stim_ts':stim_ts}
         #     pickle.dump(data,fid)
