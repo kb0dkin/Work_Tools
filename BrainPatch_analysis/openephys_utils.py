@@ -20,7 +20,7 @@ from tqdm.notebook import tqdm
 
 
 # ---------------------------------- #
-def open_sig_stims(directory:str, verbose:bool = False, reconvert:bool = False, save:bool = True, save_name:str = 'raw_signal.pkl'):
+def open_sig_stims(directory:str, verbose:bool = False, reconvert:bool = False, save:bool = True):
     '''
     open_sig_stims:
         opens an open_ephys recording and returns a numpy array with the signal
@@ -49,19 +49,24 @@ def open_sig_stims(directory:str, verbose:bool = False, reconvert:bool = False, 
         return -1
 
     # load a previously converted file
-    if not reconvert and path.exists(path.join(directory, save_name)):
-        print(f'loading previously converted file {path.join(directory,save_name)}')
-        with open(path.join(directory, save_name), 'rb') as fid:
-            data = pickle.load(fid)
-            sig = data['sig']
-            timestamps = data['timestamps']
-            stim = data['stim']
-            stim_ts = data['stim_ts']
+    filenames = ['sig_raw.npy','stim_sample_nums.npy','stim_timestamps.npy', 'timestamps.npy']
+    if not reconvert and all([path.exists(path.join(directory, fn)) for fn in filenames]):
+        print(f"loading previously converted files {path.join(directory,'sig_raw.npy')}")
+        sig = np.load(path.join(directory, 'sig_raw.npy'))
+        stim = np.load(path.join(directory, 'stim_sample_nums.npy'))
+        stim_ts = np.load(path.join(directory, 'stim_timestamps.npy'))
+        timestamps = np.load(path.join(directory, 'timestamps.npy'))
+        # with open(path.join(directory, 'raw_signal.npy'), 'rb') as fid:
+        #     data = pickle.load(fid)
+        #     sig = data['sig']
+        #     timestamps = data['timestamps']
+        #     stim = data['stim']
+        #     stim_ts = data['stim_ts']
         # skip the rest if it loaded properly
         if all([sig is not None, timestamps is not None, stim is not None, stim_ts is not None]):
             return sig, timestamps, stim, stim_ts
         else: # else fall back to conversions
-            print(f'Could not load data from {save_name}. Loading from open-ephys files')
+            print(f"Could not load data from {path.join(directory,'sig_raw.npy')}. Loading from open-ephys files")
 
  
 
@@ -109,10 +114,14 @@ def open_sig_stims(directory:str, verbose:bool = False, reconvert:bool = False, 
     timestamps = recording.sample_numbers / recording.metadata['sample_rate']
 
     if save:
-        print(f'saving data to {path.join(directory,save_name)}')
-        with open(path.join(directory,save_name),'wb') as fid:
-            data = {'sig':sig, 'timestamps':timestamps, 'stim':stim, 'stim_ts':stim_ts}
-            pickle.dump(data,fid)
+        print(f'saving data to {directory}')
+        np.save(path.join(directory, 'raw_signal.npy'))
+        np.save(path.join(directory, 'stim_sample_nums.npy'))
+        np.save(path.join(directory, 'stim_timestamps.npy'))
+        np.save(path.join(directory, 'offset_timestamps.npy'))
+        # with open(path.join(directory,save_name),'wb') as fid:
+        #     data = {'sig':sig, 'timestamps':timestamps, 'stim':stim, 'stim_ts':stim_ts}
+        #     pickle.dump(data,fid)
 
 
     # return it all
@@ -120,69 +129,8 @@ def open_sig_stims(directory:str, verbose:bool = False, reconvert:bool = False, 
 
 
 
-
 # ---------------------------------- #
-def save_raw_signal(directory:str, force:bool = False):
-    '''
-    save_filt_signal
-        filter the signals and save into a numpy array as a couple of files.
-        Overwrites any similarly named files if force == true
-
-    inputs:
-        directory: str      - base directory of open_ephys recording
-        force: bool         - force an overwrite? [False]
-
-
-    saved files:
-        raw_sig.npy         - the raw signal (assumes 64 channels)
-        timestamps.npy      - timestamps of each sample
-        stim.npy            - stim windows in sample #s
-        stim_ts.npy         - stim windows in seconds
-    
-    '''
-    # file names, and check if they exist
-    raw_path = path.join(directory, 'sig.npy')
-    ts_path = path.join(directory, 'timestamps.npy')
-    stim_path = path.join(directory, 'stim.npy')
-    stim_ts_path = path.join(directory, 'stim_ts.npy')
-
-    raw_exists = path.exists(raw_path)
-    ts_exists = path.exists(ts_path)
-    stim_exists = path.exists(stim_path)
-    stim_ts_exists = path.exists(stim_ts_path)
-
-    if force == False and (raw_exists and ts_exists and  stim_exists and stim_ts_exists):
-        print('Files have already been written. Skipping all')
-        return -1
-
-    sig, ts, stim, stim_ts = open_sig_stims(dir) # load the signals
-
-    # save it all
-    if force == False and not raw_exists:
-        np.save(raw_path, sig) # save the raw stuff
-    else:
-        print(f'{raw_path} already exists, skipping')
-
-    if force == False and not ts_exists:
-        np.save(ts_path, ts)
-    else:
-        print(f'{raw_path} already exists, skipping')
-
-    if force == False and not stim_exists:
-        np.save(stim_path, stim)
-    else:
-        print(f'{raw_path} already exists, skipping')
-
-    if force == False and not stim_ts_exists:
-        np.save(stim_ts_path, stim_ts)
-    else:
-        print(f'{raw_path} already exists, skipping')
-
-
-
-
-# ---------------------------------- #
-def ERAASR(sig:np.array, stims:np.array = None, chan_map:dict = None, num_surround:int = 0, fs:int = 30000, mode:str = 'ERAASR'):
+def ERAASR(sig:np.array, stims:np.array = None, chan_map:dict = None, num_surround:int = 0, fs:int = 30000, mode:str = 'ERAASR', save:bool = True, save_dir:str = '.'):
     '''
     ERAASR
         implementing a modified version of the
@@ -208,6 +156,10 @@ def ERAASR(sig:np.array, stims:np.array = None, chan_map:dict = None, num_surrou
         stims:np.array      - Tx2 array of stimulation start and stop times [None]
         chan_map:dict       - channel map if accounting for surrounding channels in Wc [None]
         num_surround:int    - number of electrodes away from channel to remove from Wc [0]
+        fs:int              - sample rate in Hz [30000]
+        mode:str            - 'ERAASR' or 'mine' -- different methods of removing the projected artifact [True]
+        save:bool           - save the file at {project_dir}\sig_eraasr.npy [True]
+        save_dir:str        - where should we save it?
 
     outputs:
         sig_clean:np.array  - TxC "cleaned" array. So far this is just looking at multi-channel, not multi-stimulus artifacts
@@ -242,8 +194,8 @@ def ERAASR(sig:np.array, stims:np.array = None, chan_map:dict = None, num_surrou
         resp_sig = sig_clean[resp_ind,:].reshape((stims.shape[0], resp_len, sig_clean.shape[1])).transpose((1,0,2))
         
 
-        
-
+    if save:
+        np.save(path.join(save_dir, 'sig_eraasr.npy'), sig_clean)
 
 
     return sig_clean
