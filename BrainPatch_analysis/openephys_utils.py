@@ -788,14 +788,3 @@ def plot_mean_FR(mean_FR:np.array, std_FR:np.array = None, channel:int = None, b
 
 
 
-
-
-# ---------------------------------- #
-def plot_raw_filt():
-    '''
-    plot the raw and filtered data on a single plot
-    
-    '''
-    pass
-
-
