@@ -9,14 +9,17 @@ import numpy as np
 from scipy import signal
 from os import path, listdir
 from sklearn.decomposition import PCA
-import pickle
 import re
 import pandas as pd
+from scipy.stats import ttest_ind
+import kilosort
 
 from matplotlib import pyplot as plt
 from matplotlib.patches import Polygon
 
 from tqdm.notebook import tqdm
+
+
 
 
 # ---------------------------------- #
@@ -49,26 +52,23 @@ def open_sig_stims(directory:str, verbose:bool = False, reconvert:bool = False, 
         return -1
 
     # load a previously converted file
-    filenames = ['sig_raw.npy','stim_sample_nums.npy','stim_timestamps.npy', 'timestamps.npy']
+    filenames = ['sig_raw.npy', 'stim_sample_nums.npy', 'stim_timestamps.npy', 'timestamps.npy'] # list of saved filenames if this has been converted
     if not reconvert and all([path.exists(path.join(directory, fn)) for fn in filenames]):
-        print(f"loading previously converted files {path.join(directory,'sig_raw.npy')}")
+        if verbose:
+            print(f"loading previously converted files {path.join(directory,'sig_raw.npy')}")
+
         sig = np.load(path.join(directory, 'sig_raw.npy'))
         stim = np.load(path.join(directory, 'stim_sample_nums.npy'))
         stim_ts = np.load(path.join(directory, 'stim_timestamps.npy'))
         timestamps = np.load(path.join(directory, 'timestamps.npy'))
-        # with open(path.join(directory, 'raw_signal.npy'), 'rb') as fid:
-        #     data = pickle.load(fid)
-        #     sig = data['sig']
-        #     timestamps = data['timestamps']
-        #     stim = data['stim']
-        #     stim_ts = data['stim_ts']
-        # skip the rest if it loaded properly
+        
         if all([sig is not None, timestamps is not None, stim is not None, stim_ts is not None]):
             return sig, timestamps, stim, stim_ts
-        else: # else fall back to conversions
-            print(f"Could not load data from {path.join(directory,'sig_raw.npy')}. Loading from open-ephys files")
 
- 
+    
+    
+    if verbose:
+        print(f"Could not load data from {directory}. Loading from open-ephys files")
 
     # load in the data
     session = Session(directory)
@@ -97,12 +97,18 @@ def open_sig_stims(directory:str, verbose:bool = False, reconvert:bool = False, 
 
     # load the continuous data from the first recordnode/recording
     recording = session.recordnodes[0].recordings[0].continuous[0]
-    sig = recording.samples[:,:64] * recording.metadata['bit_volts'][0]
+    sig = recording.samples[:,:64] * recording.metadata['bit_volts'][0] # convert to voltage
 
-    # pull out stimulation stim -- channel 64
-    stim_stream = recording.samples[:,64] - recording.samples[:,64].mean()
-    cutoff = stim_stream.max() * .9
-    stim = np.argwhere(np.diff(stim_stream>cutoff) == 1) # find beginning and end of high values
+    # pull out stimulation events
+    # do we have an event channel? If so, use that. Otherwise, it was recorded by the auxiliary channel
+    if len(session.recordnodes[0].recordings[0].events) > 5: # arbitrary non-zero number:
+        stim = session.recordnodes[0].recordings[0].events.sample_number.values - recording.sample_numbers[0] # remove sample# offset
+    else:
+        stim_stream = recording.samples[:,64] - recording.samples[:,64].mean()
+        cutoff = stim_stream.max() * .9
+        stim = np.argwhere(np.diff(stim_stream>cutoff) == 1) # find beginning and end of high values
+    
+    # put into a nice array, get the "timestamp" numbers too
     stim = stim[:-1] if stim.shape[0]%2 else stim # if we have a stimulus overlapping with the end, get rid of it
     stim_ts = recording.sample_numbers[stim] / recording.metadata['sample_rate'] # recording doesn't start at t=0
     stim = stim.reshape([int(stim.shape[0]/2),2]) # reshape to Ex2 (E == #stim)
@@ -114,14 +120,12 @@ def open_sig_stims(directory:str, verbose:bool = False, reconvert:bool = False, 
     timestamps = recording.sample_numbers / recording.metadata['sample_rate']
 
     if save:
-        print(f'saving data to {directory}')
-        np.save(path.join(directory, 'raw_signal.npy'), sig)
+        if verbose:
+            print(f'saving data to {directory}')
+        np.save(path.join(directory, 'sig_raw.npy'), sig)
         np.save(path.join(directory, 'stim_sample_nums.npy'), stim)
         np.save(path.join(directory, 'stim_timestamps.npy'), stim_ts)
-        np.save(path.join(directory, 'offset_timestamps.npy'), timestamps)
-        # with open(path.join(directory,save_name),'wb') as fid:
-        #     data = {'sig':sig, 'timestamps':timestamps, 'stim':stim, 'stim_ts':stim_ts}
-        #     pickle.dump(data,fid)
+        np.save(path.join(directory, 'timestamps.npy'), timestamps)
 
 
     # return it all
@@ -187,19 +191,184 @@ def ERAASR(sig:np.array, stims:np.array = None, chan_map:dict = None, num_surrou
             sig_clean[:,channel] = filt_sig[:,channel] - np.matmul(np.matmul(filt_sig, Wnc.T), Wcc)
 
 
-    # pull out across-stim artifacts
-    if stims is not None:
-        resp_len = np.diff(stims[:,0]).min()
-        resp_ind = np.concatenate([stims[:,0], stims[:,0]+resp_len])
-        resp_sig = sig_clean[resp_ind,:].reshape((stims.shape[0], resp_len, sig_clean.shape[1])).transpose((1,0,2))
-        
+    # # pull out across-stim artifacts
+    # if stims is not None:
+    #     # signal between stimuli, working with the minimum length.
+    #     resp_len = np.diff(stims[:,0]).min()
+    #     resp_ind = np.concatenate([np.arange(start=stim, stop=stim+resp_len) for stim in stims[:,0]])
+    #     resp_sig = sig_clean[resp_ind,:].reshape((stims.shape[0], resp_len, sig_clean.shape[1])).transpose((1,0,2))
+
+    #     # per-channel
+    #     for channel_no in range(sig_clean.shape[1]):
+    #         resp_sig = sig_clean[resp_ind,channel_no].reshape((stims.shape[0],  resp_len))
+    #         # fit PCA (first two components) for the per-channel stimulation
+    #         pca_stim = PCA(n_components = 2)
+    #         pca_stim.fit(resp_sig)
 
     if save:
         np.save(path.join(save_dir, 'sig_eraasr.npy'), sig_clean)
 
-
     return sig_clean
 
+
+# ---------------------------------- #
+def kilosort_FR(kilosort_dir:str, bin_sec:float = .01, fs:int = 30000):
+    '''
+    Return the firing rates for each template
+
+    inputs:
+        kilosort_dir:str        - directory where the kilosort results were stored
+        bin_sec:float           - bin length in seconds [.01]
+        fs:int                  - sampling rate [30000]
+
+    outputs:
+        firing_rates:np.array   - TxN array of firing rates of N templates
+    '''
+    spike_times = np.load(path.join(kilosort_dir, 'spike_times.npy'))
+    spike_templates = np.load(path.join(kilosort_dir, 'spike_templates.npy'))
+
+    # bin times defined by sample #s, not seconds
+    bin_times = np.arange(np.ceil(spike_times[-1]), step=bin_sec*fs)
+    # empty array to fill later
+    firing_rates = np.ndarray((bin_times.shape[0]-1, np.unique(spike_templates).shape[0]))
+    for template in np.unique(spike_templates): # for each template...
+        firing_rates[:,template] = np.histogram(spike_times[spike_templates == template], bins=bin_times)[0]
+
+    return firing_rates/bin_sec, bin_times[:-1]/fs
+
+
+# ---------------------------------- #
+def gimme_a_FR_df(directories, probe_name, settings):
+    # open the probe
+    probe = kilosort.io.load_probe(probe_name)
+
+
+    # sos for a BPF
+    filtered = True # should we filter the data?
+    sos = signal.butter(N = 8, Wn = [300, 6000], btype='bandpass', fs=30000, output='sos') if filtered else None
+
+    # binning decisions
+    bin_sec = 0.002
+
+    # to create a pandas array later I guess
+    FR_list = [] # this will contain the pre-stim mean, the mean stim response, and the map info
+
+    # length of interest for the responses and the "low mean firing rate"
+    resp_len = 10 # in bins
+    low_fr_cutoff = 1
+
+
+    # for use later
+    color_inds_map = ['low_firing','inhibited','excited']
+
+    for directory in tqdm(directories):
+
+        # pull out the current and distance
+        current = int(re.search('(\d{1,2})mA', directory)[1])
+        distance = int(re.search('(\d{3,4})um', directory)[1])
+
+        distances = np.sqrt(distance**2 + (probe['xc'] - probe['xc'].mean())**2)
+
+
+        # filter at 300, 6000
+        if filtered:
+            filt_path = path.join(directory, 'sig_filter.npy')
+            if not path.exists(filt_path):
+                sig_filter = signal.sosfiltfilt(sos, sig_eraasr, axis=0)
+                np.save(filt_path, sig_filter)
+
+
+        # kilosort
+        if not filtered:
+            # looking at the eraasr location
+            eraasr_path = path.join(directory, 'sig_eraasr.npy')
+            results_dir= path.join(directory, 'kilosort4_unfiltered')
+            
+            if not path.exists(results_dir): # run it if it doesn't already exist. Otherwise just use the existing
+                if not path.exists(eraasr_path):
+                    sig, timestamps, stims, stim_ts = open_sig_stims(directory)
+                    # clean, pull out threshold crossings, get firing rates
+                    sig_eraasr = ERAASR(sig, save_dir=directory)
+                else:
+                    sig_eraasr = np.load(eraasr_path)
+                
+                settings['filename'] = eraasr_path
+                kilosort.run_kilosort(settings, file_object=sig_eraasr.astype(np.float32), data_dtype='float32', results_dir=results_dir)
+
+            else:
+                print(f'{results_dir} already exists, using existing files')
+
+        else:
+            filt_path = path.join(directory, 'sig_filter.npy')
+            results_dir=path.join(directory, 'kilosort4_filtered')
+
+            if not path.exists(results_dir): # run it if it doesn't already exist. Otherwise just use the existing
+                if not path.exists(filt_path):
+                    sig, timestamps, stims, stim_ts = open_sig_stims(directory)
+                    # clean, pull out threshold crossings, get firing rates
+                    sig_eraasr = ERAASR(sig, save_dir=directory)
+                    sig_filter = signal.sosfiltfilt(sos, sig_eraasr, axis=0)
+                else:
+                    sig_filter = np.load(filt_path)
+
+                settings['filename'] = path.join(directory,'sig_filter.npy')
+                run_kilosort(settings, file_object=sig_filter.astype(np.float32), data_dtype='float32', results_dir=results_dir)
+
+            else:
+                print(f'{results_dir} already exists, using existing files')
+
+        # firing rates from kilosort
+        firing_rate, bins = kilosort_FR(results_dir, bin_sec=bin_sec)
+
+        # get the channel-to-template map
+        template_wf = np.load(path.join(results_dir, 'templates.npy'))
+        channel_best = (template_wf**2).sum(axis=1).argmax(axis=-1) # find the channel with biggest variance
+
+        # get stimulation times in bin count
+        stims_bin = (stims/(30000*bin_sec)).astype(int)
+
+        # pre-stimulation data
+        prestim_means = firing_rate[:stims_bin[0,0], :].mean(axis=0) # put into firing rates instead of counts
+        prestim_std = firing_rate[:stims_bin[0,0], :].std(axis=0) # put into firing rates instead of counts
+
+        # get the means for 5 bins after the stims
+        # indices for 5 ms after end of stimulation
+        poststim_inds = np.array([np.arange(start=stim, stop=stim+resp_len) for stim in stims_bin[:,1]]).flatten()
+        # split out that portion of the array and reshape it to a Stims x Time x Templates array
+        poststim_resp = firing_rate[poststim_inds,:].reshape((stims.shape[0], resp_len, firing_rate.shape[1]))
+        # find the mean
+        poststim_mean = poststim_resp.mean(axis=0)
+
+        # # split into three colors -- minimal fr before, fr increases, fr decreases
+        color_inds = 1 + (poststim_mean.mean(axis=0)>prestim_means).astype(int)
+        color_inds[prestim_means < low_fr_cutoff] = 0
+
+        for template,channel in enumerate(channel_best):
+            significant = ttest_ind(firing_rate[:stims_bin[0,0], template], poststim_resp[:,0,template], equal_var = False, alternative = 'less')
+            
+            
+            FR_info = {'template':template,
+                    'channel': channel,
+                    'prestim_mean': prestim_means[template],
+                    'prestim_std' : prestim_std[template],
+                    'poststim_max': poststim_mean[:,template].max(),
+                    'poststim_first':poststim_mean[0,template],
+                    'type': color_inds_map[color_inds[template]],
+                    'distance': distances[channel],
+                    'depth': -probe['yc'][channel],
+                    'current': current,
+                    'shank_no':probe['kcoords'][channel],
+                    'template_wf':template_wf[template,:,channel],
+                    'mean_firing_rate':poststim_mean[:,template],
+                    'recording':directory,
+                    'significant':significant}
+        
+            FR_list.append(FR_info)
+
+
+    FR_df = pd.DataFrame(FR_list)
+
+    return FR_df
 
 # ---------------------------------- #
 def threshold_crossings(sig:np.array, fs:int = 30000, high_pass:int = 300, low_pass:int = 6000,
@@ -333,7 +502,7 @@ def LFP_responses(sig, stims, len_ms:int = 25, n_chans:int = 64, sample_rate:int
 
 
 # ---------------------------------- #
-def LFP_stim_bulk(base_dir:str, n_chans:int = 64, save_fn:str = 'LFP_resp.pkl', save_plot:bool= True, reconvert:bool = False):
+def LFP_stim_bulk(base_dir:str, n_chans:int = 64,  save_plot:bool= True, reconvert:bool = False):
     '''
     Load the files, create a pandas dataframe of the responses, save and plot
 
@@ -349,42 +518,44 @@ def LFP_stim_bulk(base_dir:str, n_chans:int = 64, save_fn:str = 'LFP_resp.pkl', 
     directories = [dd for dd in listdir(base_dir) if path.isdir(path.join(base_dir,dd)) and 'mA' in dd and 'skip' not in dd]
 
     # find unique current and distance values
-    currents = np.unique(np.array([re.search('(\d{1,2})mA',dd)[1] for dd in directories]).astype(float))
-    distances = np.unique(np.array([re.search('(\d?\.?\d)mm',dd)[1] for dd in directories]).astype(float))
+    currents = np.unique(np.array([re.search('(\d{1,2})mA',dd)[1] for dd in directories]).astype(int))
+    distances = np.unique(np.array([re.search('(\d{3,4})um',dd)[1] for dd in directories]).astype(int))
 
     # set up a figure for mean responses for a couple of channels for each distance
     ax_map = dict(zip(distances, range(len(distances)))) # mapping the distance onto axis number
-    patch_flag = {dist:0 for dist in distances} # only show one stimulation patch per mean
+    patch_flag = {dist:currents.shape[0] for dist in distances} # only show one stimulation patch per mean
     rng = np.random.default_rng() # getting a random subset of the channels for plotting the average
     chan_examp = rng.choice(n_chans, 4)
     fig_means,ax_means = {},{}
     for chan in chan_examp: # setting up a dictionary of one figure per channel, one axis per distance
-        fig_means[chan],ax_means[chan] = plt.subplots(ncols=len(distances))
+        fig_means[chan],ax_means[chan] = plt.subplots(ncols=len(distances), sharey = True)
 
     print(f'Found {len(directories)} recordings in {base_dir}')
     print(f'{len(currents)} unique current values and {len(distances)} unique distances')
 
     resp_list = []
+    cur_dist_list = [] # so that we only do one recording per combination
     for sub_dir in tqdm(directories):
         
         # get the current and distance value from the directory name
-        current = float(re.search('(\d{1,2})mA', sub_dir)[1])
-        distance = float(re.search('(\d?\.?\d)mm', sub_dir)[1])
+        current = int(re.search('(\d{1,2})mA', sub_dir)[1])
+        distance = int(re.search('(\d{3,4})um', sub_dir)[1])
+
+        cur_dist = f'{current}_{distance}'
 
         directory = path.join(base_dir, sub_dir) # go through the subdir, check to make sure it exists and that there's data inside
 
         # open the directory
         sig, timestamps, stims, stim_ts = open_sig_stims(directory, reconvert=reconvert)
 
-        # skip it if we don't have any events
-        print(f'{sub_dir}: {stims.shape}')
-
         # plot the mean response on the appropriate axis
         i_dist = ax_map[distance]
-        for ch in chan_examp:
-            plot_mean_LFP(sig, stims, channel=ch, ax=ax_means[ch][i_dist], label=f'{current} mA', show_stim = patch_flag[distance] == 0)
+        if cur_dist not in cur_dist_list: # skip it if we already have this combo in the main plot
+            for ch in chan_examp:
+                # plot_mean_LFP(sig, stims, channel=ch, ax=ax_means[ch][i_dist], label=f'{current} mA', show_stim = patch_flag[distance] == 1)
+                plot_mean_LFP(sig, stims, channel=ch, ax=ax_means[ch][i_dist], label=f'{current} mA', show_stim = 0)
 
-        patch_flag[distance] = 1 # make it so the stimulation patch only shows up once
+        # patch_flag[distance] -= 1 # make it so the stimulation patch only shows up once
 
         # pull out the stim responses
         mins, min_samp = LFP_responses(sig, stims)
@@ -401,16 +572,14 @@ def LFP_stim_bulk(base_dir:str, n_chans:int = 64, save_fn:str = 'LFP_resp.pkl', 
                 } for ii in range(n_chans)]
 
         resp_list.extend(tlist)
+        cur_dist_list.append(cur_dist)
+    
+    print(cur_dist_list)
 
 
     # turn the list into a dataframe -- much faster than concat
     resp_df = pd.DataFrame(resp_list) 
 
-
-    # save it
-    if save_fn is not None:
-        with open(path.join(base_dir, save_fn), 'wb') as fid:
-            pickle.dump(resp_df, fid)
 
     # plot everything
     fig_min = plot_LFP_mins(resp_df)
@@ -422,10 +591,11 @@ def LFP_stim_bulk(base_dir:str, n_chans:int = 64, save_fn:str = 'LFP_resp.pkl', 
     for fig_key, fig_value in  fig_means.items():
         fig_value.suptitle(f'{fig_key} average responses, per distance and current')
         fig_value.set_size_inches((12,6))
+
         for ax_mean_i, ax_mean in enumerate(ax_means[fig_key]): # arange each axis properly
             # sort the legend order
             handles, labels = ax_mean.get_legend_handles_labels()
-            order = np.argsort([float(re.search('(\d+\.\d+) mA', label)[1]) for label in labels])
+            order = np.argsort([int(re.search('(\d{1,2}) mA', label)[1]) for label in labels if 'mA' in label])
             ax_mean.legend([handles[o] for o in order], [labels[o] for o in order])
             # set titles, labels etc
             ax_mean.set_title(f'{distances[ax_mean_i]} mm')
@@ -433,6 +603,9 @@ def LFP_stim_bulk(base_dir:str, n_chans:int = 64, save_fn:str = 'LFP_resp.pkl', 
             ax_mean.set_xlim([-2, 27])
             if ax_mean_i == 0:
                 ax_mean.set_ylabel('Voltage (uV)')
+            
+
+        
     
     # should we save it?
     if save_plot is not None:
@@ -491,7 +664,7 @@ def mean_stim_FR(firing_rate:np.array, stims:np.array, bin_sec:float = .001, bin
 
 
 # ---------------------------------- #
-def plot_mean_LFP(sig, stims, len_ms:int = 25, channel = 0, ax:plt.axes=None, label:str=None, show_stim:bool = True):
+def plot_mean_LFP(sig, stims, len_ms:int = 25, pre_stim:int=0, channel = 0, ax:plt.axes=None, label:str=None, show_stim:bool = True, align_stim:bool=True):
     '''
     plot the average LFP value for a channel
     
@@ -499,10 +672,12 @@ def plot_mean_LFP(sig, stims, len_ms:int = 25, channel = 0, ax:plt.axes=None, la
         sig : np.array          - filtered etc signal (samples x channels)
         stims : np.array        - stimulation start/stop sample numbers (stims x 2)
         len_ms : int            - window of interest (ms) [25]
+        pre_stim : int          - pre-stimulation period to show (ms) [0]
         channel : int           - channel of interest [0]
         ax : plt.axes           - axis for plot [None]
         label : str             - label name for the LFP [None]
         show_stim : bool        - whether to show the stimulation or not [True]
+        align_stim : bool       - subtract by the mean during the stimulus? [True]
         
     '''
     
@@ -516,7 +691,7 @@ def plot_mean_LFP(sig, stims, len_ms:int = 25, channel = 0, ax:plt.axes=None, la
     n_stims = stims.shape[0] # number of stimulations
 
     # put together a NxT array
-    t_len = len_ms * 30
+    t_len = (len_ms+pre_stim) * 30
     responses = np.zeros((n_stims, t_len))
     
     # go through each stim
@@ -524,12 +699,12 @@ def plot_mean_LFP(sig, stims, len_ms:int = 25, channel = 0, ax:plt.axes=None, la
         if stim[0]+4 >= stim[1] or stim[1] > sig.shape[0]: # skip any where we might get an empty selection
             responses[i_stim,:] = np.nan
         else:
-            response = sig[stim[0]:stim[0]+len_ms*30,channel] # pop out the stimulation response
-            art_means = np.nanmean(sig[stim[0]+4:stim[1]-4]) # center the during-stimulation to 0
+            response = sig[stim[0]-pre_stim*30:stim[0]+len_ms*30,channel] # pop out the stimulation response
+            art_means = np.nanmean(sig[stim[0]+4:stim[1]-4]) if align_stim else np.nanmean(sig[stim[0]-pre_stim*30])
             responses[i_stim,:] = response - art_means
     
     # put together the means, STDs, and timestamps
-    ts = np.arange(t_len)/30
+    ts = np.arange(start=-pre_stim, stop=len_ms, step=1/30)
     means = np.nanmean(responses, axis=0)
     line = ax.plot(ts, means, label=label)
     
@@ -544,9 +719,10 @@ def plot_mean_LFP(sig, stims, len_ms:int = 25, channel = 0, ax:plt.axes=None, la
     if show_stim:
         stim_len, stim_count = np.unique(np.diff(stims, axis=1)/30, return_counts=True)
         stim_len = stim_len[np.argmax(stim_count)]
-        top,bottom = np.nanmax(responses), np.nanmin(responses)
-        top,bottom = top + .2*abs(top), bottom - .2*abs(bottom)
-        stim_patch = Polygon(np.array([[0, bottom],[stim_len, bottom], [stim_len, top], [0, top]]), alpha=0.2, color='k')
+        # top,bottom = np.nanmax(responses), np.nanmin(responses)
+        # top,bottom = top + .2*abs(top), bottom - .2*abs(bottom)
+        bottom,top = ax.get_ylim()
+        stim_patch = Polygon(np.array([[0, bottom],[stim_len, bottom], [stim_len, top], [0, top]]), alpha=0.2, color='k', label='stimulation period')
         ax.add_patch(stim_patch)
 
 
@@ -619,7 +795,6 @@ def plot_LFP_min_times(resp_df:pd.DataFrame):
 
         ax[i_dist].set_title(f'{dist} mm')
         ax[i_dist].set_xlabel('Current (mA)')
-
 
         # remove the outer boxes
         for spine in ['top','bottom','right','left']:
