@@ -1,0 +1,12 @@
+name: oxytocin_analysis
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - pytorch
+  - pytorch-cuda=11.8
+  - jupyter
+  - ipympl
+  - matplotlib
+  - faiss
