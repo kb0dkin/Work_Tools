@@ -4,9 +4,14 @@ channels:
   - defaults
 dependencies:
   - python=3.9
-  - pytorch
-  - pytorch-cuda=11.8
   - jupyter
   - ipympl
   - matplotlib
   - faiss
+  - pip
+  - pip:
+    - --extra-index-url https://download.pytorch.org/whl/cu118
+    - torch
+    - kilosort[gui]
+    - pip install git+https://github.com/open-ephys/open-ephys-python-tools.git@archive
+

@@ -27,9 +27,9 @@ from tqdm import tqdm
 # ------------------------------ 
 def open_raw(directory:str, verbose:bool = False):
     '''
-    open_sig_stims:
+    open_raw:
         opens an open_ephys recording and returns a numpy array with the signal
-        (TxN orientation) and a timestamp of the stimulation pulses
+        (TxN orientation) and rotary encoder pulses
 
         will return data in only the first recordnode. Change as needed
 
@@ -86,6 +86,32 @@ def open_raw(directory:str, verbose:bool = False):
     return sig, timestamps
 
 
+# ---------------------------------- #
+def rot2vel(rot_raw:np.array, input_fs:int = 30000, output_fs:int = 2000, vel_type:str = 'deg'):
+    '''
+    rot2vel
+        takes the raw signal of the rotary encoder and turns it into an
+        angular velocity. Default is deg/s.
+
+    inputs [default]:
+        rot_raw: np.array           raw values from the rotary encoder. Should be a Tx2+ array of high/low values
+        input_fs: int               input sampling frequency in hz [30000 hz]
+        output_fs : int             output sampling frequency in hz [2000 hz]
+        vel_type : str              'deg' or 'rad' per second ['deg']
+    
+    
+    outputs:
+        ang_vel: np.array           Tx1 angular velocity 
+    
+    '''
+
+    
+    
+
+
+
+
+
 
 
 # ---------------------------------- #
@@ -96,7 +122,7 @@ def ERAASR(sig:np.array, chan_map:dict = None, num_surround:int = 0, fs:int = 30
         PCA-based artifact rejection technique from O'Shea and Shenoy 2019
         
         Pre-filter data to get rid of obvious junk
-        1. HPF at 10 hz (respiratory noise etc)
+        1. HPF at 10 hz (respiratory movement etc)
 
         across-channel removal
         2. PCA to get the matrix weighting
