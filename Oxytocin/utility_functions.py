@@ -10,17 +10,43 @@
 from open_ephys.analysis import Session
 import numpy as np
 from scipy import signal
-from os import path, listdir
+from os import path, listdir, filesep
+from path import Path
 from sklearn.decomposition import PCA
 import re
 import pandas as pd
 from scipy.stats import ttest_ind
 import kilosort
+from glob import glob
+import xmltodict
 
 from matplotlib import pyplot as plt
 from matplotlib.patches import Polygon
 
 from tqdm import tqdm
+
+
+# ---------------------------------- #
+class recording():
+    '''
+    Load the entire recording into a single class so that we don't have to pass data back and forth
+    and create copies in memory. Hopefully this will reduce the memory usage.
+
+
+    '''
+    
+    def __init__(self, directory:str|Path, verbose:bool = False):
+        '''
+        initialize the recording class. From the base directory of the recording we can
+        pull in the data and all relevent settings.
+
+        '''
+        self.metadata = {'directory':directory}
+        settings_file = glob(f'{directory}{path.sep}**{path.sep}settings.xml',recursive=True)
+        
+
+
+    def open_raw(self, directory:str)
 
 
 
@@ -75,15 +101,30 @@ def open_raw(directory:str, verbose:bool = False):
 
     # load the continuous data from the first recordnode/recording
     recording = session.recordnodes[0].recordings[0].continuous[0]
-    sig = recording.samples[:,:64] * recording.metadata['bit_volts'][0] # convert to voltage
+    sig = recording.samples
+    # sig = recording.samples[:,:64] * recording.metadata['bit_volts'][0] # convert to voltage
 
 
     # timestamps -- 
     #   we'll be using "sample numbers" as the basis, which don't start at 0
-    timestamps = recording.sample_numbers / recording.metadata['sample_rate']
+    # timestamps = recording.sample_numbers / recording.metadata['sample_rate']
+    timestamps = recording.timestamps/30000 # hard coded because I'm not finding any info in the metadata. Maybe I need to open the settings file?
 
     # return it all
     return sig, timestamps
+
+
+# ---------------------------------- #
+def raw2nwb(directory:str, verbose:bool = False):
+    '''
+    raw2nwb
+        takes raw recordings and turns it into an nwb file. This should allow us to convert
+        once, then work on with the data on computers besides the 
+
+
+
+
+    '''
 
 
 # ---------------------------------- #
