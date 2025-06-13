@@ -10,8 +10,8 @@
 from open_ephys.analysis import Session
 import numpy as np
 from scipy import signal
-from os import path, listdir, filesep
-from path import Path
+from os import path, listdir, PathLike
+from pathlib import Path
 from sklearn.decomposition import PCA
 import re
 import pandas as pd
@@ -19,6 +19,7 @@ from scipy.stats import ttest_ind
 import kilosort
 from glob import glob
 import xmltodict
+import typing
 
 from matplotlib import pyplot as plt
 from matplotlib.patches import Polygon
@@ -35,7 +36,7 @@ class recording():
 
     '''
     
-    def __init__(self, directory:str|Path, verbose:bool = False):
+    def __init__(self, directory: typing.Union[str, PathLike], verbose:bool = False):
         '''
         initialize the recording class. From the base directory of the recording we can
         pull in the data and all relevent settings.
@@ -46,7 +47,8 @@ class recording():
         
 
 
-    def open_raw(self, directory:str)
+    def open_raw(self, directory:str):
+        pass
 
 
 
