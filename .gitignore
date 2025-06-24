@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.exe
 
 # C extensions
 *.so
@@ -180,3 +181,8 @@ cython_debug/
 
 # sqlite
 *.sqlite
+
+
+# matlab stuff
+*.asv
+*.mat
