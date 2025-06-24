@@ -10,8 +10,6 @@
 from open_ephys.analysis import Session
 import numpy as np
 from scipy import signal
-from os import path, listdir, PathLike
-from pathlib import Path
 from sklearn.decomposition import PCA
 import re
 import pandas as pd
@@ -21,10 +19,19 @@ from glob import glob
 import xmltodict
 import typing
 
+# file and OS operations
+from os import path, listdir, PathLike, walk
+from pathlib import Path
+from psutil import virtual_memory
+from tempfile import TemporaryFile
+
+# plotting
 from matplotlib import pyplot as plt
 from matplotlib.patches import Polygon
 
+# nice little status bars
 from tqdm import tqdm
+
 
 
 # ---------------------------------- #
@@ -36,7 +43,7 @@ class recording():
 
     '''
     
-    def __init__(self, directory: typing.Union[str, PathLike], verbose:bool = False):
+    def __init__(self, directory: typing.Union[str, PathLike], probe_map:typing.Union[str,PathLike,dict], verbose:bool = False):
         '''
         initialize the recording class. From the base directory of the recording we can
         pull in the data and all relevent settings.
@@ -44,11 +51,149 @@ class recording():
         '''
         self.metadata = {'directory':directory}
         settings_file = glob(f'{directory}{path.sep}**{path.sep}settings.xml',recursive=True)
+
+        # load the raw data
+        if not path.exists(directory):
+            print(f'{directory} does not exist. Choose a new directory then run the open_raw method')
+        else:
+            self.open_raw(directory, verbose=verbose) # load the signal
+            self.directory = directory # store for future info
+        
+        # general useful info
+        self.metadata = {'fs':30000,
+                         }
+        
+        # probe information
+        if isinstance(probe_map,[str,PathLike]):
+            self.probe_map = kilosort.io.load_probe(probe_map)
+        elif isinstance(probe_map,dict):
+            self.probe_map = probe_map
+        else:
+            print(f'Could not load probe map. Will not be able to use that information for ERAASR or kilosort')
+    
         
 
+    def open_raw(self, directory:str, verbose:bool = False):
+        '''
+        open_raw:
+            opens an open_ephys recording and returns a numpy array with the signal
+            (TxN orientation) and rotary encoder pulses
 
-    def open_raw(self, directory:str):
-        pass
+            will return data in only the first recordnode. Change as needed
+
+    
+        inputs:
+            directory: str      - directory of the recording
+            verbose: bool       - how much information to share when loading the recording [False]
+
+        stores the data inside of the  "raw_sig", "raw_ts", and "raw_events" fields
+
+        '''
+        # does the directory exist?
+        if not path.exists(directory):
+            print(f'{directory} does not exist')
+            return -1
+
+        # load in the data
+        session = Session(directory)
+
+        # give some information if asking for "verbose"
+        if verbose:
+            print(session)
+
+            # iterate through the recording nodes
+            for i_rec in range(len(session.recordnodes)):
+                print(f'{len(session.recordnodes[i_rec].recordings)} recording(s) in session "{session.recordnodes[i_rec].directory}"\n')
+                recordings = session.recordnodes[i_rec].recordings
+    
+                for i_rec,recording in enumerate(recordings):
+                    # recording.load_continuous()
+                    # recording.load_spikes()
+                    # recording.load_events()
+
+                    print(f'Recording {i_rec} has:')
+                    print(f'\t{len(recording.continuous)} continuous streams')
+                    print(f'\t{len(recording.spikes)} spike streams')
+                    print(f'\t{len(recording.events)} event streams')
+    
+                print('\n')
+
+        # load the continuous data from the first recordnode/recording
+        self.raw_sig = session.recordnodes[0].recordings[0].continuous[0].samples
+        # sig = recording.samples[:,:64] * recording.metadata['bit_volts'][0] # convert to voltage
+
+        # timestamps -- 
+        #   we'll be using "sample numbers" as the basis, which don't start at 0
+        self.raw_ts = recording.timestamps/30000 # hard coded because I'm not finding any info in the metadata. Maybe I need to open the settings file?
+
+        # events -- this is important for both the stim times and the rotary encoder data
+        self.raw_events = session.recordnodes[0].recordings[0].events
+
+        # if there are spikes, give a warning that we're not using them
+        if session.recordnodes[0].recordings[0].spikes:
+            print(f'Found a spikes data stream, but will not be using it')
+
+    
+
+    def ERAASR(self):
+        '''
+        ERAASR
+            implementing a modified version of the
+            PCA-based artifact rejection technique from O'Shea and Shenoy 2019
+    
+            Pre-filter data to get rid of obvious junk
+            1. HPF at 10 hz (respiratory movement etc)
+
+            across-channel removal
+            2. PCA to get the matrix weighting
+            3. Remove top 4 (adjusted PCs) from each channel c
+                a. subtract Reconstructed PCs from array
+    
+            across-stimulation removal (do we have anything similar for non-stim?)
+            4. per-channel, PCA across stimulations
+            5. reproject, subtract least-squares fit.  
+        '''
+
+        sos_filt = signal.butter(N = 2, Wn = [10], fs = self.fs, btype='high', output='sos') # create filter
+        filt_sig = signal.sosfiltfilt(sos_filt, self.raw_sig, axis=0) # filter it
+
+        # fit the principal components -- only looking for the first 4 (per 2018 paper)
+        pca = PCA(n_components=4)
+        pca.fit(filt_sig)
+
+        # across-channel artifacts
+        sig_clean = np.empty_like(filt_sig) # make a copy for subtraction
+        for channel in tqdm(np.arange(filt_sig.shape[1])):
+            Wnc = pca.components_.copy() # make a copy for the exclusionary projection matrix
+            Wcc = Wnc[:,channel].copy() # and the channel-specific reprojection
+            Wnc[:,channel] = 0 # exclude channel's contribution
+
+            if mode == 'ERAASR':
+                Ac = np.matmul(filt_sig, Wnc.T)
+                ArtMat = np.linalg.lstsq(Ac,filt_sig[:,channel], rcond=None)[0]
+                sig_clean[:,channel] = filt_sig[:,channel] - np.matmul(Ac,ArtMat)
+            else:
+                sig_clean[:,channel] = filt_sig[:,channel] - np.matmul(np.matmul(filt_sig, Wnc.T), Wcc)
+
+
+        # # pull out across-stim artifacts
+        # if stims is not None:
+        #     # signal between stimuli, working with the minimum length.
+        #     resp_len = np.diff(stims[:,0]).min()
+        #     resp_ind = np.concatenate([np.arange(start=stim, stop=stim+resp_len) for stim in stims[:,0]])
+        #     resp_sig = sig_clean[resp_ind,:].reshape((stims.shape[0], resp_len, sig_clean.shape[1])).transpose((1,0,2))
+
+        #     # per-channel
+        #     for channel_no in range(sig_clean.shape[1]):
+        #         resp_sig = sig_clean[resp_ind,channel_no].reshape((stims.shape[0],  resp_len))
+        #         # fit PCA (first two components) for the per-channel stimulation
+        #         pca_stim = PCA(n_components = 2)
+        #         pca_stim.fit(resp_sig)
+
+        if save:
+            np.save(path.join(save_dir, 'sig_eraasr.npy'), sig_clean)
+
+        return sig_clean
 
 
 
@@ -150,8 +295,21 @@ def rot2vel(rot_raw:np.array, input_fs:int = 30000, output_fs:int = 2000, vel_ty
 
     
     
+def disk_usage(directory):
+    '''
+    utility function to see how much space all of the files in a directory are using.
 
+    A quick and dirty way to decide whether we will use numpy memmapping and pagination for a recording
+    '''
+    total_size = 0
+    for dirpath, dirnames, filenames in walk(directory):
+        for f in filenames:
+            fp = path.join(dirpath, f)
+            # skip if it is symbolic link
+            if not path.islink(fp):
+                total_size += path.getsize(fp)
 
+    return total_size
 
 
 
