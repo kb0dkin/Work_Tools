@@ -43,13 +43,15 @@ class recording():
 
     '''
     
-    def __init__(self, directory: typing.Union[str, PathLike], probe_map:typing.Union[str,PathLike,dict], verbose:bool = False):
+    def __init__(self, directory: typing.Union[str, PathLike], probe_map:typing.Union[str,PathLike,dict] = None, verbose:bool = False):
         '''
         initialize the recording class. From the base directory of the recording we can
         pull in the data and all relevent settings.
 
         '''
-        self.metadata = {'directory':directory}
+        self.metadata = {'directory':directory,
+                          'fs':30000,
+                          }
         settings_file = glob(f'{directory}{path.sep}**{path.sep}settings.xml',recursive=True)
 
         # load the raw data
@@ -59,12 +61,9 @@ class recording():
             self.open_raw(directory, verbose=verbose) # load the signal
             self.directory = directory # store for future info
         
-        # general useful info
-        self.metadata = {'fs':30000,
-                         }
         
         # probe information
-        if isinstance(probe_map,[str,PathLike]):
+        if isinstance(probe_map,(str,PathLike)):
             self.probe_map = kilosort.io.load_probe(probe_map)
         elif isinstance(probe_map,dict):
             self.probe_map = probe_map
@@ -94,6 +93,8 @@ class recording():
             print(f'{directory} does not exist')
             return -1
 
+
+
         # load in the data
         session = Session(directory)
 
@@ -104,34 +105,47 @@ class recording():
             # iterate through the recording nodes
             for i_rec in range(len(session.recordnodes)):
                 print(f'{len(session.recordnodes[i_rec].recordings)} recording(s) in session "{session.recordnodes[i_rec].directory}"\n')
-                recordings = session.recordnodes[i_rec].recordings
     
-                for i_rec,recording in enumerate(recordings):
-                    # recording.load_continuous()
-                    # recording.load_spikes()
-                    # recording.load_events()
-
-                    print(f'Recording {i_rec} has:')
-                    print(f'\t{len(recording.continuous)} continuous streams')
-                    print(f'\t{len(recording.spikes)} spike streams')
-                    print(f'\t{len(recording.events)} event streams')
-    
-                print('\n')
 
         # load the continuous data from the first recordnode/recording
-        self.raw_sig = session.recordnodes[0].recordings[0].continuous[0].samples
-        # sig = recording.samples[:,:64] * recording.metadata['bit_volts'][0] # convert to voltage
-
-        # timestamps -- 
-        #   we'll be using "sample numbers" as the basis, which don't start at 0
-        self.raw_ts = recording.timestamps/30000 # hard coded because I'm not finding any info in the metadata. Maybe I need to open the settings file?
-
+        recording = session.recordnodes[0].recordings[0]
+        # timestamps
+        self.raw_ts = recording.continuous[0].timestamps/30000 # hard coded because I'm not finding any info in the metadata. Maybe I need to open the settings file?
         # events -- this is important for both the stim times and the rotary encoder data
-        self.raw_events = session.recordnodes[0].recordings[0].events
+        self.raw_events = recording.events
 
-        # if there are spikes, give a warning that we're not using them
-        if session.recordnodes[0].recordings[0].spikes:
-            print(f'Found a spikes data stream, but will not be using it')
+        # # continuous data -- this is going to be the biggest thing
+        # # iterate if we're potentially using a big hunk of memory:
+        # if not dir_too_big(directory):
+        #     self.raw_sig = session.recordnodes[0].recordings[0].continuous[0].samples
+        # else:
+        #     svmem = virtual_memory()
+        #     print('Recording is too large for memory. Iterating to place it in memmap array')
+
+        #     # preallocate the memmap array
+        #     total_samples = recording.continuous[0].timestamps.shape[0]
+        #     self.raw_sig = np.memmap(TemporaryFile("w+b"), dtype='float64',mode='w+',shape=[total_samples,64])
+
+        #     # iterate in 10000 sample loops
+        #     for i_idx,idx in tqdm(enumerate([[slc, slc+10000] for slc in np.arange(stop=total_samples, step=10000)])):
+        #         self.raw_sig[idx,:] = recording.continuous[0].samples[idx,:] # pull things into memory in chunks
+        #         self.raw_sig.flush() # write to disk
+
+
+        svmem = virtual_memory()
+        print('Recording is too large for memory. Iterating to place it in memmap array')
+
+        # preallocate the memmap array
+        total_samples = recording.continuous[0].timestamps.shape[0]
+        self.raw_sig = np.memmap(TemporaryFile("w+b"), dtype='float64',mode='w+',shape=(total_samples,64))
+
+        # iterate in 10000 sample loops
+        indices = np.append(np.arange(stop=total_samples, step=100000), total_samples)
+        indices = np.array((indices[:-1],indices[1:])).T
+        for idx in tqdm(indices):
+            self.raw_sig[idx[0]:idx[1],:] = recording.continuous[0].samples[idx[0]:idx[1],:] # pull things into memory in chunks
+            self.raw_sig.flush() # write to disk
+
 
     
 
@@ -234,11 +248,6 @@ def open_raw(directory:str, verbose:bool = False):
             recordings = session.recordnodes[i_rec].recordings
     
             for i_rec,recording in enumerate(recordings):
-                recording.load_continuous()
-                recording.load_spikes()
-                recording.load_events()
-                recording.load_messages()
-
                 print(f'Recording {i_rec} has:')
                 print(f'\t{len(recording.continuous)} continuous streams')
                 print(f'\t{len(recording.spikes)} spike streams')
@@ -390,3 +399,42 @@ def ERAASR(sig:np.array, chan_map:dict = None, num_surround:int = 0, fs:int = 30
         np.save(path.join(save_dir, 'sig_eraasr.npy'), sig_clean)
 
     return sig_clean
+
+
+# ----------------------------------
+# Utility functions
+# ----------------------------------
+def get_size(directory:typing.Union[PathLike, str] = '.'):
+    # how much space to the recordings use?
+    total_size = 0
+    for dirpath, dirnames, filenames in walk(directory):
+        for f in filenames:
+            fp = path.join(dirpath, f)
+            # skip if it is symbolic link
+            if not path.islink(fp):
+                total_size += path.getsize(fp)
+
+    return total_size
+
+
+def dir_too_big(directory:typing.Union[PathLike, str] = '.', memory_pct:float = 50) -> bool:
+    # does the recording take more than X% of free memory?
+    svmem = virtual_memory() # get memory usage information
+
+    if memory_pct > 100:
+        memory_pct = 50
+        print(r"You provided a percentage greater than 100%. Working off 50% instead")
+
+    return (svmem.available * (memory_pct/100)) <= get_size(directory) 
+
+
+
+
+
+# ----------------------------------
+# Run it as a script
+# ----------------------------------
+if __name__ == "__main__":
+    '''
+    
+    '''
