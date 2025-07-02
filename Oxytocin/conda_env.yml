@@ -8,6 +8,7 @@ dependencies:
   - ipympl
   - matplotlib
   - faiss
+  - tqdm
   - pip
   - pip:
     - --extra-index-url https://download.pytorch.org/whl/cu118
