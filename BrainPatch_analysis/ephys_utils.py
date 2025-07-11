@@ -1,18 +1,27 @@
 #! /usr/bin/env python
 
-# Open Ephys Utilities
+# Ephys Utilities
 # 
-# These are some basic open/closing etc tasks 
+# These contain the underlying analysis and data processing code
+# for the in-vivo electrophysiology portions of the paper. 
+#
+# It will be much easier to use the Jupyter notebook to follow this, but 
+# feel free to play with these functions directly if you want.
 
 from open_ephys.analysis import Session
 import numpy as np
 from scipy import signal
-from os import path, listdir
 from sklearn.decomposition import PCA
-import re
 import pandas as pd
 from scipy.stats import ttest_ind
 import kilosort
+
+# system and path operations
+from os import path, listdir, PathLike, mkdir
+import re
+from pathlib import Path
+import typing
+
 
 from matplotlib import pyplot as plt
 from matplotlib.patches import Polygon
@@ -23,7 +32,7 @@ from tqdm.notebook import tqdm
 
 
 # ---------------------------------- #
-def open_sig_stims(directory:str, verbose:bool = False, reconvert:bool = False, save:bool = True):
+def open_sig_stims(directory:typing.Union[str, PathLike], verbose:bool = False, reconvert:bool = False, save:bool = True, save_dir:typing.Union[str, PathLike] = None):
     '''
     open_sig_stims:
         opens an open_ephys recording and returns a numpy array with the signal
@@ -33,10 +42,11 @@ def open_sig_stims(directory:str, verbose:bool = False, reconvert:bool = False, 
 
     
     inputs:
-        directory: str      - base directory of the recording
+        directory: str|path - base directory of the recording
         verbose: bool       - how much information to share when loading the recording [False]
         reconvert: bool     - If a file with the saved signal already exists, do we reconvert? [False]
         save: bool          - Save the converted data? [True]
+        save_dir : str|path - directory to save into. Will save in the raw data directory if it's None [None]
 
     outputs:
         sig: np.array       - [TxN] (N==64) array, in uV
@@ -120,12 +130,13 @@ def open_sig_stims(directory:str, verbose:bool = False, reconvert:bool = False, 
     timestamps = recording.sample_numbers / recording.metadata['sample_rate']
 
     if save:
+        save_dir = directory if save_dir is None else save_dir
         if verbose:
             print(f'saving data to {directory}')
-        np.save(path.join(directory, 'sig_raw.npy'), sig)
-        np.save(path.join(directory, 'stim_sample_nums.npy'), stim)
-        np.save(path.join(directory, 'stim_timestamps.npy'), stim_ts)
-        np.save(path.join(directory, 'timestamps.npy'), timestamps)
+        np.save(path.join(save_dir, 'sig_raw.npy'), sig)
+        np.save(path.join(save_dir, 'stim_sample_nums.npy'), stim)
+        np.save(path.join(save_dir, 'stim_timestamps.npy'), stim_ts)
+        np.save(path.join(save_dir, 'timestamps.npy'), timestamps)
 
 
     # return it all
@@ -153,15 +164,12 @@ def ERAASR(sig:np.array, stims:np.array = None, chan_map:dict = None, num_surrou
         5. reproject, subtract least-squares fit.  
 
 
-
-
     inputs:
         sig:np.array        - TxC array of the raw signal
         stims:np.array      - Tx2 array of stimulation start and stop times [None]
         chan_map:dict       - channel map if accounting for surrounding channels in Wc [None]
         num_surround:int    - number of electrodes away from channel to remove from Wc [0]
         fs:int              - sample rate in Hz [30000]
-        mode:str            - 'ERAASR' or 'mine' -- different methods of removing the projected artifact [True]
         save:bool           - save the file at {project_dir}\sig_eraasr.npy [True]
         save_dir:str        - where should we save it?
 
@@ -180,30 +188,11 @@ def ERAASR(sig:np.array, stims:np.array = None, chan_map:dict = None, num_surrou
     sig_clean = np.empty_like(filt_sig) # make a copy for subtraction
     for channel in np.arange(sig.shape[1]):
         Wnc = pca.components_.copy() # make a copy for the exclusionary projection matrix
-        Wcc = Wnc[:,channel].copy() # and the channel-specific reprojection
         Wnc[:,channel] = 0 # exclude channel's contribution
 
-        if mode == 'ERAASR':
-            Ac = np.matmul(filt_sig, Wnc.T)
-            ArtMat = np.linalg.lstsq(Ac,filt_sig[:,channel], rcond=None)[0]
-            sig_clean[:,channel] = filt_sig[:,channel] - np.matmul(Ac,ArtMat)
-        else:
-            sig_clean[:,channel] = filt_sig[:,channel] - np.matmul(np.matmul(filt_sig, Wnc.T), Wcc)
+        Ac = np.matmul(filt_sig, Wnc.T)
+        sig_clean[:,channel] = filt_sig[:,channel] - np.matmul(Ac,np.matmul(np.linalg.pinv(Ac),filt_sig[:,channel]))
 
-
-    # # pull out across-stim artifacts
-    # if stims is not None:
-    #     # signal between stimuli, working with the minimum length.
-    #     resp_len = np.diff(stims[:,0]).min()
-    #     resp_ind = np.concatenate([np.arange(start=stim, stop=stim+resp_len) for stim in stims[:,0]])
-    #     resp_sig = sig_clean[resp_ind,:].reshape((stims.shape[0], resp_len, sig_clean.shape[1])).transpose((1,0,2))
-
-    #     # per-channel
-    #     for channel_no in range(sig_clean.shape[1]):
-    #         resp_sig = sig_clean[resp_ind,channel_no].reshape((stims.shape[0],  resp_len))
-    #         # fit PCA (first two components) for the per-channel stimulation
-    #         pca_stim = PCA(n_components = 2)
-    #         pca_stim.fit(resp_sig)
 
     if save:
         np.save(path.join(save_dir, 'sig_eraasr.npy'), sig_clean)
@@ -238,7 +227,16 @@ def kilosort_FR(kilosort_dir:str, bin_sec:float = .01, fs:int = 30000):
 
 
 # ---------------------------------- #
-def gimme_a_FR_df(directories, probe_name, settings):
+def firingRate_dataframe(directories, probe_name, settings):
+    '''
+    Returns a dataframe of pre- and post- stimulation firing rates per condition.
+    
+    4. Calculates firing rates of those units throughout the recording
+        a. pre-stimulation average firing rate
+        b. firing rate during the 2ms immediately following the stimulus
+
+
+    '''
     # open the probe
     probe = kilosort.io.load_probe(probe_name)
 
@@ -250,7 +248,7 @@ def gimme_a_FR_df(directories, probe_name, settings):
     # binning decisions
     bin_sec = 0.002
 
-    # to create a pandas array later I guess
+    # to create a pandas dataframe later I guess
     FR_list = [] # this will contain the pre-stim mean, the mean stim response, and the map info
 
     # length of interest for the responses and the "low mean firing rate"
@@ -312,7 +310,7 @@ def gimme_a_FR_df(directories, probe_name, settings):
                     sig_filter = np.load(filt_path)
 
                 settings['filename'] = path.join(directory,'sig_filter.npy')
-                run_kilosort(settings, file_object=sig_filter.astype(np.float32), data_dtype='float32', results_dir=results_dir)
+                kilosort.run_kilosort(settings, file_object=sig_filter.astype(np.float32), data_dtype='float32', results_dir=results_dir)
 
             else:
                 print(f'{results_dir} already exists, using existing files')
@@ -370,64 +368,91 @@ def gimme_a_FR_df(directories, probe_name, settings):
 
     return FR_df
 
+
 # ---------------------------------- #
-def threshold_crossings(sig:np.array, fs:int = 30000, high_pass:int = 300, low_pass:int = 6000,
-                        thresh_mult:float = -3, multi_rejection:int = None, low_cutoff:int = -20):
+def bulk_preprocess(raw_data_dir:typing.Union[str,Path] = 'Raw_Data', 
+                    processed_data_dir:typing.Union[str,Path] = 'Processed_Data',
+                    reconvert:bool = False,
+                    probe_path:typing.Union[str,Path] = None,
+                    kilosort_settings:dict = None):
     '''
-    find threshold crossings based on a multiplier. First run a bandpass filter, 
-    then do some basic artifact rejection.
+    Iterating through the raw_data_dir, this script:
 
-        1. Bandpass filter [default 300-6000 hz]
-        2. 
-
+    1. Opens recording from OpenEPhys formats into numpy arrays
+    2. Cleans the raw data through ERAASR and filtering (refer to methods)
+    3. Runs the data through Kilosort to extract neuron firing
     
-    inputs:
-        sig : np.array          - input signal, TxN
-        fs : int                - sample rate [30000]
-        b_high : int            - HPF frequency in hz [300]
-        b_low : int             - LPF frequency in hz [6000]
-        thresh_mult : int       - standard deviation threshold multiplier [-3]
-        multi_rejection : bool  - should we remove spikes that are on more than 10 channels in less than 1 ms?
     
-    outputs:
-        spikes : dict           - dict with spike times, channel #, and waveform
-
     '''
 
-    # BPF
-    sos_bpf = signal.butter(N = 8, Wn = [high_pass, low_pass], btype='bandpass', fs = fs, output='sos')
-    sig_filt = signal.sosfiltfilt(sos=sos_bpf, x = sig, axis=0)
+    ## parse inputs
+    processed_data_dir = Path(processed_data_dir) if not isinstance(processed_data_dir, PathLike) else processed_data_dir
+    raw_data_dir = Path(raw_data_dir) if not isinstance(raw_data_dir, PathLike) else raw_data_dir
+    
+    # make sure everything exists
+    if not Path.exists(raw_data_dir):
+        print(f'Could not find {raw_data_dir}. Exiting!')
+        return -1
+    
+    if not Path.exists(processed_data_dir):
+        print(f'Could not find {processed_data_dir}. Exiting!')
+        return -1
 
-    # find the threshold values for each channel
-    thresholds = np.std(sig_filt, axis=0) * thresh_mult
-    # make the threshold at least ..
-    if low_cutoff is not None: # if we want to make sure the waveforms are at least low_cutoff
-        thresholds = np.where(thresholds<low_cutoff, thresholds, low_cutoff) # replace any threshold values that are less than the cutoff
-    xings = np.nonzero(np.diff((sig_filt < thresholds).astype(int), axis=0) == 1)
+    # probe map
+    probe = kilosort.io.load_probe(probe_path) if probe_path is not None else None
 
-    # need to introduce some basic cross-channel artifact rejection
-    # if more than 10 channels have a spike in less than one ms assume it's not real
-    if multi_rejection is not None:
-        multi_chan = np.nonzero((xings[0][multi_rejection:] - xings[0][:-multi_rejection]) < (.001*fs))[0] # is the lapsed time less than fs?
-        multi_chan = np.unique(multi_chan[:,np.newaxis] + np.arange(10)[np.newaxis,:])
-        keep_chan = np.setdiff1d(np.arange(len(xings[0])), multi_chan)
-        xings = (xings[0][keep_chan], xings[1][keep_chan])
+    # default kilosort settings if it's empty
+    if kilosort_settings is None:
+        kilosort_settings = {'probe_name':probe_path,
+                             'n_chan_bin':64,
+                             'nearest_chans':0}
+    
+
+    # processing settings
+    sos = signal.butter(N = 8, Wn = [300, 6000], btype='bandpass', fs=30000, output='sos')
+
+    # iterate through the directories
+    subdirs = [subdir for subdir in raw_data_dir.iterdir() if subdir.is_dir()]
+    for subdir in tqdm(subdirs, desc='[bulk_preprocess] processing files'):
+        processed_subdir = processed_data_dir / subdir.relative_to(raw_data_dir)
+        if not Path.exists(processed_subdir):
+            mkdir(processed_subdir)
 
 
-    # split into per-channel dictionary
-    bt = int(.0003*fs)
-    at = int(.0012 * fs)
-    spike_dict = {}
-    for i_channel in np.arange(sig.shape[1]):
-        spike_ts = xings[0][xings[1] == i_channel] # sample #
-        # waveform -- make sure the whole thing is within the bounds of the signal
-        spike_wf = [sig_filt[ts-bt:ts+at,i_channel] for ts in spike_ts if (ts>bt and ts+at<sig.shape[0])] # waveform
-        spike_wf = np.array(spike_wf)
+        # open the raw data if it hasn't already been loaded
+        raw_npy_file = processed_subdir / Path('sig_raw.npy')
+        print('\r[bulk process] loading raw data', end='')
+        if not Path.exists(raw_npy_file):
+            sig, timestamps, stims, stim_ts = open_sig_stims(directory=subdir, reconvert=reconvert, save_dir = processed_subdir)
+        else:
+            sig = np.load(raw_npy_file)
 
-        spike_dict[i_channel] = {'sample_no':spike_ts, 'waveform':spike_wf}
 
-    return spike_dict
+        # ERAASR
+        eraasr_path = processed_subdir / Path('sig_eraasr.npy')
+        print('\r[bulk process] cleaning artifacts', end='')
+        if not path.exists(eraasr_path) or reconvert:
+            sig_eraasr = ERAASR(sig, save_dir=processed_subdir)
+        else:
+            sig_eraasr = np.load(eraasr_path)
 
+        # filter at 300, 6000.
+        filt_path = processed_subdir / Path('sig_filter.npy')
+        print('\r[bulk process] filtering', end='')
+        if not Path.exists(filt_path) or reconvert:
+            sig_filter = signal.sosfiltfilt(sos, sig_eraasr, axis=0)
+            np.save(filt_path, sig_filter)
+        else:
+            sig_filter = np.load(filt_path) 
+
+
+        # kilosort
+        kilosort_dir = processed_subdir / Path('kilosort4')
+        print('\r[bulk process] kilosort', end='')
+        if not Path.exists(kilosort_dir):
+            kilosort_settings['filename'] = filt_path # had issues with it loading the data, so I give it the data both from a file and from an array
+            kilosort.run_kilosort(kilosort_settings, file_object=sig_filter.astype(np.float32), data_dtype='float32', results_dir=kilosort_dir)
+    
 
 
 # ---------------------------------- #
@@ -962,4 +987,37 @@ def plot_mean_FR(mean_FR:np.array, std_FR:np.array = None, channel:int = None, b
     ax.set_ylabel('Firing Rate (Hz)')
 
 
+
+# ---------------------------------- #
+def base_dir_structure_check(base_dir:typing.Union[str, PathLike] = '.'):
+    '''
+    Checks to make sure the provided data directory has the expected sub directories
+
+    Will return an error and let the user know if the directory does not exist or
+    if it doesn't contain a Raw_Data directory and a probe file. 
+
+    It will create a Plots directory and Processed_Data directory if it does not exist
+    '''
+
+    # check to make sure all expected directories exist inside of the base_dir
+    if not Path.exists(base_dir):
+        print(f'Could not find {base_dir}. Did you type that in correctly?')
+        return -1
+
+    elif not Path.exists(base_dir / Path('Raw_Data')) or not Path.exists(base_dir / Path('64-4shank-poly-brainpatch-chanMap.mat')):
+        print('Could not find Raw_Data folder. Are you sure you downloaded the directory correctly?')
+        return -1
+
+    elif not Path.exists(base_dir / Path('Processed_Data')):
+        print('Could not find Processed_Data directory. Creating new one')
+        mkdir(base_dir / Path('Processed_Data'))
+        return 1
+    
+    elif not Path.exists(base_dir / Path('Plots')):
+        print('Could not find Plots directory. Creating new one')
+        mkdir(base_dir / Path('Plots'))
+        return 1
+    
+    else:
+        return 1
 

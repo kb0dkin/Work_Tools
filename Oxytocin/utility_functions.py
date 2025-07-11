@@ -239,6 +239,12 @@ class recording():
             print('[kilosort] Only options for are eraasr_cleaned or raw_sig')
             return -1
         
+        kilosort_settings = {'probe':self.probe_map,
+                             'n_chan_bin': 64,
+                             'filename':self.eraasr_filename}
+        
+        kilosort.run_kilosort(settings=kilosort_settings)
+        
 
 
 

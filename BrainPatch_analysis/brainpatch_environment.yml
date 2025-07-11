@@ -3,13 +3,15 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  - python=3.9
+  - python=3.9 
+  - setuptools<81
+  - pip
   - numpy
   - pandas
   - matplotlib
   - ipympl
   - jupyter
+  - tqdm
   - pip:
       - kilosort==4.0.16
       - open-ephys-python-tools==0.1.12
-      - tqdm
