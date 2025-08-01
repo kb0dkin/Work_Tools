@@ -1,3 +1,3 @@
-%% sbx2png
+%% sbx2tiff
 %
 % 

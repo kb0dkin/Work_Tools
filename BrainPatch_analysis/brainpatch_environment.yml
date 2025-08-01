@@ -12,6 +12,8 @@ dependencies:
   - ipympl
   - jupyter
   - tqdm
+  - cudatoolkit=11.8
+  - cudnn
   - pip:
       - kilosort==4.0.16
       - open-ephys-python-tools==0.1.12

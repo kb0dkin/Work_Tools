@@ -421,34 +421,37 @@ def bulk_preprocess(raw_data_dir:typing.Union[str,Path] = 'Raw_Data',
 
         # open the raw data if it hasn't already been loaded
         raw_npy_file = processed_subdir / Path('sig_raw.npy')
-        print('\r[bulk process] loading raw data', end='')
+        print('\r[bulk process] loading raw data            ', end='')
         if not Path.exists(raw_npy_file):
             sig, timestamps, stims, stim_ts = open_sig_stims(directory=subdir, reconvert=reconvert, save_dir = processed_subdir)
         else:
+            print('*', end='')
             sig = np.load(raw_npy_file)
 
 
         # ERAASR
         eraasr_path = processed_subdir / Path('sig_eraasr.npy')
-        print('\r[bulk process] cleaning artifacts', end='')
-        if not path.exists(eraasr_path) or reconvert:
+        print('\r[bulk process] cleaning artifacts            ', end='')
+        if (not path.exists(eraasr_path)) or reconvert:
             sig_eraasr = ERAASR(sig, save_dir=processed_subdir)
         else:
+            print('*', end='')
             sig_eraasr = np.load(eraasr_path)
 
         # filter at 300, 6000.
         filt_path = processed_subdir / Path('sig_filter.npy')
-        print('\r[bulk process] filtering', end='')
-        if not Path.exists(filt_path) or reconvert:
+        print('\r[bulk process] filtering            ', end='')
+        if (not Path.exists(filt_path)) or reconvert:
             sig_filter = signal.sosfiltfilt(sos, sig_eraasr, axis=0)
             np.save(filt_path, sig_filter)
         else:
+            print('*', end='')
             sig_filter = np.load(filt_path) 
 
 
         # kilosort
         kilosort_dir = processed_subdir / Path('kilosort4')
-        print('\r[bulk process] kilosort', end='')
+        print('\r[bulk process] kilosort            ', end='')
         if not Path.exists(kilosort_dir):
             kilosort_settings['filename'] = filt_path # had issues with it loading the data, so I give it the data both from a file and from an array
             kilosort.run_kilosort(kilosort_settings, file_object=sig_filter.astype(np.float32), data_dtype='float32', results_dir=kilosort_dir)
@@ -1001,20 +1004,20 @@ def base_dir_structure_check(base_dir:typing.Union[str, PathLike] = '.'):
 
     # check to make sure all expected directories exist inside of the base_dir
     if not Path.exists(base_dir):
-        print(f'Could not find {base_dir}. Did you type that in correctly?')
+        print(f'[base_dir_structure_check] Could not find {base_dir}. Did you type that in correctly?')
         return -1
 
     elif not Path.exists(base_dir / Path('Raw_Data')) or not Path.exists(base_dir / Path('64-4shank-poly-brainpatch-chanMap.mat')):
-        print('Could not find Raw_Data folder. Are you sure you downloaded the directory correctly?')
+        print('[base_dir_structure_check] Could not find Raw_Data folder. Are you sure you downloaded the directory correctly?')
         return -1
 
     elif not Path.exists(base_dir / Path('Processed_Data')):
-        print('Could not find Processed_Data directory. Creating new one')
+        print('[base_dir_structure_check] Could not find Processed_Data directory. Creating new one')
         mkdir(base_dir / Path('Processed_Data'))
         return 1
     
     elif not Path.exists(base_dir / Path('Plots')):
-        print('Could not find Plots directory. Creating new one')
+        print('[base_dir_structure_check] Could not find Plots directory. Creating new one')
         mkdir(base_dir / Path('Plots'))
         return 1
     
